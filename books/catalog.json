@@ -1,0 +1,22 @@
+[
+  {
+    "id": "voss-uz",
+    "title": "Hech qanday murosa yo‘q",
+    "subtitle": "Muzokaralarni xuddi hayotingiz shunga bog‘liqdek olib boring",
+    "author": "Kris Voss, Tal Raz",
+    "badge": "O‘zbekcha • 1–5-boblar (30 000 so‘z)",
+    "wordCount": 29991,
+    "chaptersCount": 5,
+    "url": "./books/voss_uz.json"
+  },
+  {
+    "id": "voss-ru",
+    "title": "Никаких компромиссов (To‘liq ruscha)",
+    "subtitle": "Веди переговоры так, словно от них зависит твоя жизнь",
+    "author": "Крис Восс, Тал Раз",
+    "badge": "Русский • To‘liq kitob (72 338 so‘z)",
+    "wordCount": 72338,
+    "chaptersCount": 53,
+    "url": "./books/voss_ru.json"
+  }
+]

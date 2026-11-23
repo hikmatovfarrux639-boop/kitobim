@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="uz" data-theme="amoled">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Kitobim" />
+  <title>Kitobim — Shaxsiy Kitob O‘qigich</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- ==================== READER VIEW (DEFAULT) ==================== -->
+  <main id="readerView" class="reader-view">
+    <!-- Invisible touch zones: Left (prev), Center (toggle HUD), Right (next) -->
+    <div id="tapZoneLeft" class="tap-zone tap-left" aria-label="Oldingi bet"></div>
+    <div id="tapZoneCenter" class="tap-zone tap-center" aria-label="Menyuni ochish"></div>
+    <div id="tapZoneRight" class="tap-zone tap-right" aria-label="Keyingi bet"></div>
+
+    <!-- Actual rendered book page -->
+    <div id="pageViewport" class="page-viewport">
+      <article id="pageContent" class="page-content" lang="uz"></article>
+    </div>
+
+    <!-- Minimal bottom page counter (always visible, exact screenshot style: 213 / 484) -->
+    <footer id="minimalFooter" class="minimal-footer">
+      <span id="pageCounterText">1 / 1</span>
+    </footer>
+
+    <!-- Hidden offscreen measurer with identical geometry for exact pagination -->
+    <div id="pageMeasurerWrap" class="page-measurer-wrap" aria-hidden="true">
+      <article id="pageMeasurer" class="page-content"></article>
+    </div>
+
+    <!-- Floating HUD Overlay (Toggled by tapping center of screen) -->
+    <div id="readerHud" class="reader-hud hidden">
+      <header class="hud-top">
+        <button id="btnOpenLibrary" class="hud-btn" type="button">
+          <span class="hud-icon">←</span>
+          <span>Kutubxona</span>
+        </button>
+        <div class="hud-book-meta">
+          <div id="hudBookTitle" class="hud-book-title">Hech qanday murosa yo‘q</div>
+          <div id="hudChapterTitle" class="hud-chapter-title">1-bob</div>
+        </div>
+        <div class="hud-top-actions">
+          <button id="btnToggleBookmark" class="hud-icon-btn" type="button" title="Xatcho‘p qo‘shish">🔖</button>
+          <button id="btnOpenToc" class="hud-btn" type="button">☰ Boblar</button>
+        </div>
+      </header>
+
+      <section class="hud-bottom">
+        <!-- Page slider row -->
+        <div class="hud-progress-row">
+          <button id="btnPrevPageHud" class="hud-step-btn" type="button">‹</button>
+          <div class="hud-slider-wrap">
+            <input id="pageSlider" type="range" min="1" max="1" value="1" />
+            <div class="hud-slider-labels">
+              <span id="hudPageInfo">Bet 1 / 1</span>
+              <span id="hudPercentInfo">0%</span>
+            </div>
+          </div>
+          <button id="btnNextPageHud" class="hud-step-btn" type="button">›</button>
+        </div>
+
+        <!-- Typography controls -->
+        <div class="hud-controls-grid">
+          <div class="hud-control-group">
+            <span class="hud-label">Yozuv kattaligi</span>
+            <div class="hud-stepper">
+              <button id="btnFontMinus" type="button">A−</button>
+              <span id="fontSizeLabel">22px</span>
+              <button id="btnFontPlus" type="button">A+</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
+            <span class="hud-label">Qator orasi</span>
+            <div class="hud-segmented" id="lineHeightGroup">
+              <button type="button" data-lh="1.42">Zich</button>
+              <button type="button" data-lh="1.58" class="active">O‘rta</button>
+              <button type="button" data-lh="1.78">Keng</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
+            <span class="hud-label">Shrift</span>
+            <div class="hud-segmented" id="fontFamilyGroup">
+              <button type="button" data-ff="serif" class="active">Kitob</button>
+              <button type="button" data-ff="sans">Zamonaviy</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
+            <span class="hud-label">Rang rejimi</span>
+            <div class="hud-themes" id="themeGroup">
+              <button type="button" data-theme="amoled" class="theme-pill theme-amoled active">Qora</button>
+              <button type="button" data-theme="night" class="theme-pill theme-night">Tungi</button>
+              <button type="button" data-theme="sepia" class="theme-pill theme-sepia">Sepiya</button>
+              <button type="button" data-theme="day" class="theme-pill theme-day">Oq</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Chapters & Bookmarks Drawer -->
+    <aside id="tocDrawer" class="drawer hidden">
+      <div id="tocBackdrop" class="drawer-backdrop"></div>
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <div class="drawer-tabs">
+            <button id="tabBtnChapters" class="drawer-tab active" type="button">Boblar</button>
+            <button id="tabBtnBookmarks" class="drawer-tab" type="button">Xatcho‘plar</button>
+          </div>
+          <button id="btnCloseToc" class="drawer-close" type="button">✕</button>
+        </div>
+        <ul id="tocList" class="toc-list"></ul>
+        <ul id="bookmarksList" class="toc-list hidden"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ==================== LIBRARY & IMPORT VIEW ==================== -->
+  <section id="libraryView" class="library-view hidden">
+    <header class="lib-header">
+      <div>
+        <h1 class="lib-logo">Kitobim</h1>
+        <p class="lib-subtitle">Shaxsiy AMOLED kitob o‘qigich</p>
+      </div>
+      <button id="btnResumeTop" class="btn-resume-top" type="button">O‘qishga qaytish →</button>
+    </header>
+
+    <!-- Quick Action Bar: Upload PDF/TXT or Paste Text -->
+    <div class="import-cards">
+      <label class="import-card" for="fileInput">
+        <div class="import-icon">📄</div>
+        <div>
+          <div class="import-title">PDF yoki TXT yuklash</div>
+          <div class="import-desc">PDF, TXT, MD faylni avtomatik tozalab, katta harfli kitobga aylantiradi</div>
+        </div>
+        <input id="fileInput" type="file" accept=".pdf,.txt,.md,.fb2" hidden />
+      </label>
+
+      <button id="btnOpenPasteModal" class="import-card" type="button">
+        <div class="import-icon">📋</div>
+        <div>
+          <div class="import-title">Nusxalangan matnni o‘qish</div>
+          <div class="import-desc">Copy qilingan maqola, kitob qismi yoki matnni 1 bosishda kitobdek ochish</div>
+        </div>
+      </button>
+    </div>
+
+    <!-- Import status banner -->
+    <div id="importStatus" class="import-status hidden"></div>
+
+    <!-- Bookshelf -->
+    <div class="lib-section">
+      <h2 class="lib-section-title">Mening kitoblarim</h2>
+      <div id="booksGrid" class="books-grid"></div>
+    </div>
+  </section>
+
+  <!-- ==================== COPY-PASTE MODAL ==================== -->
+  <div id="pasteModal" class="modal hidden">
+    <div id="pasteModalBackdrop" class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Nusxalangan matnni kitob qilish</h3>
+        <button id="btnClosePasteModal" class="drawer-close" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-row">
+          <input id="pasteTitleInput" type="text" placeholder="Sarlavha (bo‘sh qolsa 1-qatordan olinadi)" />
+          <button id="btnClipboardPaste" class="btn-secondary" type="button">📋 Buferdan joylash</button>
+        </div>
+        <textarea id="pasteTextarea" rows="10" placeholder="O‘qimoqchi bo‘lgan matningizni shu yerga tashlang..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelPaste" class="btn-secondary" type="button">Bekor qilish</button>
+        <button id="btnSavePaste" class="btn-primary" type="button">Kitob qilib ochish</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
