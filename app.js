@@ -769,8 +769,24 @@ async function openBookById(bookId) {
   readerHud.classList.add('hidden');
 
   const saved = loadBookProgress(currentBook.id);
-  if (saved && typeof saved.chapterIdx === 'number') {
-    renderChapter(saved.chapterIdx, { ratio: typeof saved.ratio === 'number' ? saved.ratio : 0 });
+  if (saved) {
+    const chIdx =
+      typeof saved.chapterIdx === 'number'
+        ? saved.chapterIdx
+        : typeof saved.anchor?.chapterIdx === 'number'
+          ? saved.anchor.chapterIdx
+          : 0;
+    if (typeof saved.ratio === 'number') {
+      renderChapter(chIdx, { ratio: saved.ratio });
+    } else if (typeof saved.anchor?.blockIdx === 'number') {
+      const totalBlocks = Math.max(1, (currentBook.chapters[chIdx]?.blocks || []).length);
+      renderChapter(chIdx, { ratio: Math.min(1, saved.anchor.blockIdx / totalBlocks) });
+    } else if (typeof saved.percent === 'number' && saved.percent > 0) {
+      renderChapter(0, 0);
+      jumpToGlobalPage(Math.max(1, Math.round((saved.percent / 100) * totalGlobalPages)));
+    } else {
+      renderChapter(chIdx, 0);
+    }
   } else {
     renderChapter(0, 0);
   }
