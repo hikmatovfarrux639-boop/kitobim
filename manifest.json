@@ -1,7 +1,7 @@
 {
-  "name": "Kitobim — Shaxsiy Kitob O‘qigich",
-  "short_name": "Kitobim",
-  "description": "AMOLED ekran uchun qulay, katta harfli, betma-bet varaqlanadigan shaxsiy kitob o‘qigich (PDF, TXT, Copy-Paste)",
+  "name": "HFR",
+  "short_name": "HFR",
+  "description": "HFR — Shaxsiy AMOLED kitob o‘qigich (PDF, TXT, Copy-Paste)",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",

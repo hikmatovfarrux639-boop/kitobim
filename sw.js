@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kitobim-v2';
+const CACHE_NAME = 'hfr-v3';
 const ASSETS = [
   '/',
   '/index.html',
