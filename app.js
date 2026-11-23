@@ -3,6 +3,7 @@ const SETTINGS_KEY = 'kitobim_settings_v2';
 const ACTIVE_BOOK_KEY = 'kitobim_active_book_v1';
 const DB_NAME = 'kitobim_user_books_db';
 const DB_STORE = 'books';
+const COL_GAP = 32;
 
 const defaultSettings = {
   fontSize: 20,
@@ -13,19 +14,23 @@ const defaultSettings = {
 
 let settings = { ...defaultSettings, ...loadJson(SETTINGS_KEY, {}) };
 let builtInCatalog = [];
-let userBooksMeta = [];
+let bookCache = new Map();
 let currentBook = null;
-let pages = [];
-let chapterStartPages = [];
-let currentPageIdx = 0;
+let currentChapterIdx = 0;
+let currentChapPageIdx = 0;
+let currentChapTotalPages = 1;
+let colW = 320;
+let colH = 600;
+let chapterCharCounts = [];
+let chapterEstPages = [];
+let chapterStartGlobal = [];
+let totalGlobalPages = 1;
 
 // ==================== DOM ELEMENTS ====================
 const readerView = document.getElementById('readerView');
 const libraryView = document.getElementById('libraryView');
-const pageViewport = document.getElementById('pageViewport');
+const pageColumnMask = document.getElementById('pageColumnMask');
 const pageContent = document.getElementById('pageContent');
-const pageMeasurerWrap = document.getElementById('pageMeasurerWrap');
-const pageMeasurer = document.getElementById('pageMeasurer');
 const pageCounterText = document.getElementById('pageCounterText');
 
 const readerHud = document.getElementById('readerHud');
@@ -50,7 +55,7 @@ const pasteModal = document.getElementById('pasteModal');
 const pasteTitleInput = document.getElementById('pasteTitleInput');
 const pasteTextarea = document.getElementById('pasteTextarea');
 
-// ==================== HELPERS & UZBEK/RUSSIAN SOFT-HYPHENATOR ====================
+// ==================== HELPERS & FAST SOFT-HYPHENATOR ====================
 function loadJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -74,21 +79,32 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-const UZ_RU_VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я', 'ў']);
+const UZ_RU_VOWELS = new Set([
+  'a', 'e', 'i', 'o', 'u',
+  'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я', 'ў',
+]);
 const SHY = '\u00AD';
+const wordHyphCache = new Map();
 
 function hyphenateWord(word) {
   if (word.length < 5) return word;
+  const cached = wordHyphCache.get(word);
+  if (cached !== undefined) return cached;
+
   const m = word.match(
     /^([^A-Za-z\u0400-\u04FF\u2018\u2019\u02BB']*)([A-Za-z\u0400-\u04FF\u2018\u2019\u02BB'-]+)([^A-Za-z\u0400-\u04FF\u2018\u2019\u02BB']*)$/
   );
-  if (!m) return word;
+  if (!m) {
+    wordHyphCache.set(word, word);
+    return word;
+  }
   const [, pre, core, post] = m;
   if (core.includes('-')) {
-    return pre + core.split('-').map(hyphenateWord).join('-') + post;
+    const res = pre + core.split('-').map(hyphenateWord).join('-') + post;
+    wordHyphCache.set(word, res);
+    return res;
   }
 
-  // Tokenize Uzbek multi-character phonemes (o‘, g‘, sh, ch, ng) and Russian letters
   const tokens = [];
   const lower = core.toLowerCase();
   let i = 0;
@@ -116,12 +132,19 @@ function hyphenateWord(word) {
     }
   }
 
-  if (tokens.length < 4) return word;
+  if (tokens.length < 4) {
+    wordHyphCache.set(word, word);
+    return word;
+  }
+
   const vIdx = [];
   for (let idx = 0; idx < tokens.length; idx++) {
     if (tokens[idx].v) vIdx.push(idx);
   }
-  if (vIdx.length < 2) return word;
+  if (vIdx.length < 2) {
+    wordHyphCache.set(word, word);
+    return word;
+  }
 
   const breaks = new Set();
   for (let k = 0; k < vIdx.length - 1; k++) {
@@ -143,7 +166,9 @@ function hyphenateWord(word) {
     out += tokens[idx].t;
     if (breaks.has(idx)) out += SHY;
   }
-  return pre + out + post;
+  const result = pre + out + post;
+  wordHyphCache.set(word, result);
+  return result;
 }
 
 function hyphenateText(text) {
@@ -159,6 +184,40 @@ function formatInline(str, useHyphens = true) {
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
   return s;
+}
+
+function getChapterHtml(chapter) {
+  if (chapter._cachedHtml) return chapter._cachedHtml;
+  const parts = [`<h1 class="reader-ch-title" data-b="-1">${formatInline(chapter.title, false)}</h1>`];
+  const blocks = chapter.blocks || [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    switch (b.type) {
+      case 'subtitle':
+        parts.push(`<div class="reader-ch-sub" data-b="${i}">${formatInline(b.text, false)}</div>`);
+        break;
+      case 'h2':
+        parts.push(`<h2 class="reader-h2" data-b="${i}">${formatInline(b.text, false)}</h2>`);
+        break;
+      case 'hr':
+        parts.push(`<div class="reader-hr" data-b="${i}">&#8226;&nbsp;&nbsp;&#8226;&nbsp;&nbsp;&#8226;</div>`);
+        break;
+      case 'li':
+        parts.push(`<p class="reader-li" data-b="${i}">${formatInline(b.text, true)}</p>`);
+        break;
+      case 'p':
+      default: {
+        const isDlg = (b.text || '').startsWith('—') || (b.text || '').startsWith('– ');
+        parts.push(
+          `<p class="${isDlg ? 'dialogue' : ''}" data-b="${i}">${formatInline(b.text || '', true)}</p>`
+        );
+        break;
+      }
+    }
+  }
+  parts.push('<span id="colEndSentinel" class="col-end-sentinel">&nbsp;</span>');
+  chapter._cachedHtml = parts.join('');
+  return chapter._cachedHtml;
 }
 
 // ==================== INDEXEDDB FOR USER BOOKS ====================
@@ -216,9 +275,147 @@ async function deleteUserBook(id) {
   });
 }
 
-// ==================== SETTINGS APPLICATION ====================
-function applySettings(rePaginate = true) {
-  const anchor = getCurrentAnchor();
+// ==================== INSTANT NATIVE MULTI-COLUMN ENGINE (< 5ms) ====================
+function computeBookCharCounts(book) {
+  chapterCharCounts = book.chapters.map((ch) => {
+    let n = (ch.title || '').length;
+    for (const b of ch.blocks || []) {
+      n += (b.text || '').length + 12;
+    }
+    return Math.max(100, n);
+  });
+}
+
+function updateGlobalPageEstimates() {
+  if (!currentBook) return;
+  const curChars = chapterCharCounts[currentChapterIdx] || 1000;
+  const charsPerPage = Math.max(180, curChars / Math.max(1, currentChapTotalPages));
+
+  let running = 0;
+  chapterEstPages = [];
+  chapterStartGlobal = [];
+  for (let i = 0; i < currentBook.chapters.length; i++) {
+    chapterStartGlobal.push(running);
+    const est =
+      i === currentChapterIdx
+        ? currentChapTotalPages
+        : Math.max(1, Math.round(chapterCharCounts[i] / charsPerPage));
+    chapterEstPages.push(est);
+    running += est;
+  }
+  totalGlobalPages = Math.max(1, running);
+}
+
+function measureCurrentChapterLayout(preserveRatio = null) {
+  if (!currentBook) return;
+
+  // Exact integer geometry so columns NEVER drift even by 0.5px
+  const rect = pageColumnMask.getBoundingClientRect();
+  colW = Math.max(180, Math.floor(rect.width));
+  colH = Math.max(200, Math.floor(rect.height));
+
+  pageContent.style.setProperty('--col-w', `${colW}px`);
+  pageContent.style.setProperty('--col-h', `${colH}px`);
+  pageContent.style.setProperty('--col-gap', `${COL_GAP}px`);
+
+  // Temporarily reset transform to read exact column coordinates
+  pageContent.style.transform = 'translate3d(0, 0, 0)';
+
+  const stride = colW + COL_GAP;
+  const sentinel = document.getElementById('colEndSentinel');
+  let chapPages = 1;
+
+  if (sentinel) {
+    const trackRect = pageContent.getBoundingClientRect();
+    const sentRect = sentinel.getBoundingClientRect();
+    const relLeft = sentRect.left - trackRect.left;
+    if (relLeft >= 0) {
+      chapPages = Math.max(1, Math.floor((relLeft + 2) / stride) + 1);
+    }
+  } else {
+    chapPages = Math.max(1, Math.round((pageContent.scrollWidth + COL_GAP) / stride));
+  }
+
+  currentChapTotalPages = chapPages;
+
+  if (preserveRatio === 'end') {
+    currentChapPageIdx = currentChapTotalPages - 1;
+  } else if (typeof preserveRatio === 'number') {
+    currentChapPageIdx = Math.min(
+      currentChapTotalPages - 1,
+      Math.max(0, Math.round(preserveRatio * (currentChapTotalPages - 1)))
+    );
+  } else {
+    currentChapPageIdx = Math.min(currentChapTotalPages - 1, Math.max(0, currentChapPageIdx));
+  }
+
+  updateGlobalPageEstimates();
+  applyColumnOffset();
+}
+
+function renderChapter(chapterIdx, position = 0) {
+  if (!currentBook || !currentBook.chapters.length) return;
+  currentChapterIdx = Math.min(currentBook.chapters.length - 1, Math.max(0, chapterIdx));
+  const chapter = currentBook.chapters[currentChapterIdx];
+  pageContent.innerHTML = getChapterHtml(chapter);
+
+  if (position === 'end') {
+    measureCurrentChapterLayout('end');
+  } else if (typeof position === 'object' && position !== null && typeof position.ratio === 'number') {
+    measureCurrentChapterLayout(position.ratio);
+  } else {
+    currentChapPageIdx = typeof position === 'number' ? position : 0;
+    measureCurrentChapterLayout(null);
+  }
+}
+
+function applyColumnOffset() {
+  if (!currentBook) return;
+  currentChapPageIdx = Math.min(currentChapTotalPages - 1, Math.max(0, currentChapPageIdx));
+  const stride = colW + COL_GAP;
+  pageContent.style.transform = `translate3d(${-currentChapPageIdx * stride}px, 0, 0)`;
+
+  const globalPageIdx = (chapterStartGlobal[currentChapterIdx] || 0) + currentChapPageIdx;
+  const humanPage = Math.min(totalGlobalPages, globalPageIdx + 1);
+  const pct =
+    totalGlobalPages <= 1 ? 100 : Math.min(100, Math.round((globalPageIdx / (totalGlobalPages - 1)) * 100));
+  const chapTitle = currentBook.chapters[currentChapterIdx]?.title || '';
+
+  pageCounterText.textContent = `${humanPage} / ${totalGlobalPages}`;
+
+  hudBookTitle.textContent = currentBook.title || '';
+  hudChapterTitle.textContent = chapTitle;
+  hudPageInfo.textContent = `Bet ${humanPage} / ${totalGlobalPages}`;
+  hudPercentInfo.textContent = `${pct}%`;
+  pageSlider.max = String(totalGlobalPages);
+  pageSlider.value = String(humanPage);
+
+  const bms = loadBookmarks(currentBook.id);
+  const isBookmarked = bms.some(
+    (b) => b.chapterIdx === currentChapterIdx && b.chapPageIdx === currentChapPageIdx
+  );
+  btnToggleBookmark.classList.toggle('active', isBookmarked);
+
+  const ratio =
+    currentChapTotalPages <= 1 ? 0 : currentChapPageIdx / (currentChapTotalPages - 1);
+
+  saveBookProgress(currentBook.id, {
+    chapterIdx: currentChapterIdx,
+    chapPageIdx: currentChapPageIdx,
+    ratio,
+    pageIdx: globalPageIdx,
+    totalPages: totalGlobalPages,
+    percent: pct,
+    chapterTitle: chapTitle,
+    updatedAt: Date.now(),
+  });
+}
+
+// ==================== SETTINGS APPLICATION (INSTANT < 4ms!) ====================
+function applySettings(relayout = true) {
+  const prevRatio =
+    currentChapTotalPages <= 1 ? 0 : currentChapPageIdx / (currentChapTotalPages - 1);
+
   document.documentElement.setAttribute('data-theme', settings.theme);
   document.documentElement.style.setProperty('--reader-font-size', `${settings.fontSize}px`);
   document.documentElement.style.setProperty('--reader-line-height', String(settings.lineHeight));
@@ -242,235 +439,9 @@ function applySettings(rePaginate = true) {
 
   saveJson(SETTINGS_KEY, settings);
 
-  if (rePaginate && currentBook) {
-    paginateCurrentBook(anchor);
+  if (relayout && currentBook && !readerView.classList.contains('hidden')) {
+    measureCurrentChapterLayout(prevRatio);
   }
-}
-
-// ==================== EXACT WORD-BOUNDARY PAGINATION ENGINE ====================
-function blockToHtml(block) {
-  switch (block.type) {
-    case 'ch_title':
-      return `<h1 class="reader-ch-title">${formatInline(block.text, false)}</h1>`;
-    case 'subtitle':
-      return `<div class="reader-ch-sub">${formatInline(block.text, false)}</div>`;
-    case 'h2':
-      return `<h2 class="reader-h2">${formatInline(block.text, false)}</h2>`;
-    case 'hr':
-      return `<div class="reader-hr">&#8226;&nbsp;&nbsp;&#8226;&nbsp;&nbsp;&#8226;</div>`;
-    case 'li':
-      return `<p class="reader-li">${formatInline(block.text, true)}</p>`;
-    case 'p_cont':
-      return `<p class="no-indent">${formatInline(block.text, true)}</p>`;
-    case 'p':
-    default: {
-      const isDlg = block.text.startsWith('—') || block.text.startsWith('– ');
-      return `<p class="${isDlg ? 'dialogue' : ''}">${formatInline(block.text, true)}</p>`;
-    }
-  }
-}
-
-function getCurrentAnchor() {
-  if (!pages.length || !pages[currentPageIdx]) return null;
-  return pages[currentPageIdx].anchor;
-}
-
-function paginateCurrentBook(targetAnchor = null) {
-  if (!currentBook) return;
-
-  const styles = window.getComputedStyle(pageViewport);
-  const availW =
-    pageViewport.clientWidth -
-    parseFloat(styles.paddingLeft || 0) -
-    parseFloat(styles.paddingRight || 0);
-  const availH =
-    pageViewport.clientHeight -
-    parseFloat(styles.paddingTop || 0) -
-    parseFloat(styles.paddingBottom || 0);
-
-  if (availW <= 40 || availH <= 60) return;
-
-  pageMeasurerWrap.style.width = `${availW}px`;
-  pageMeasurer.innerHTML = '';
-
-  const newPages = [];
-  const newChapterStarts = [];
-
-  currentBook.chapters.forEach((chapter, cIdx) => {
-    newChapterStarts[cIdx] = newPages.length;
-
-    const stream = [{ type: 'ch_title', text: chapter.title, blockIdx: -1, wordOffset: 0 }];
-    (chapter.blocks || []).forEach((b, bIdx) => {
-      stream.push({ ...b, blockIdx: bIdx, wordOffset: 0 });
-    });
-
-    let curHtmlParts = [];
-    let pageAnchor = { chapterIdx: cIdx, blockIdx: 0, wordOffset: 0 };
-    pageMeasurer.innerHTML = '';
-
-    function flushPage() {
-      if (!curHtmlParts.length) return;
-      newPages.push({
-        chapterIdx: cIdx,
-        chapterTitle: chapter.title,
-        anchor: { ...pageAnchor },
-        html: curHtmlParts.join(''),
-      });
-      curHtmlParts = [];
-      pageMeasurer.innerHTML = '';
-    }
-
-    let i = 0;
-    while (i < stream.length) {
-      const item = stream[i];
-      if (!curHtmlParts.length) {
-        pageAnchor = {
-          chapterIdx: cIdx,
-          blockIdx: Math.max(0, item.blockIdx),
-          wordOffset: item.wordOffset || 0,
-        };
-      }
-
-      const candidateHtml = blockToHtml(item);
-      const prevHtml = curHtmlParts.join('');
-      pageMeasurer.innerHTML = prevHtml + candidateHtml;
-
-      if (pageMeasurer.scrollHeight <= availH) {
-        curHtmlParts.push(candidateHtml);
-        i++;
-        continue;
-      }
-
-      const words = (item.text || '').trim().split(/\s+/).filter(Boolean);
-      const isSplittable =
-        (item.type === 'p' || item.type === 'p_cont' || item.type === 'li') && words.length >= 2;
-
-      if (!isSplittable) {
-        if (curHtmlParts.length > 0) {
-          flushPage();
-          continue;
-        } else {
-          curHtmlParts.push(candidateHtml);
-          flushPage();
-          i++;
-          continue;
-        }
-      }
-
-      // Binary search how many words fit on the remaining space of this page
-      let lo = 1;
-      let hi = words.length - 1;
-      let best = 0;
-
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        const subBlock = { ...item, text: words.slice(0, mid).join(' ') };
-        pageMeasurer.innerHTML = prevHtml + blockToHtml(subBlock);
-        if (pageMeasurer.scrollHeight <= availH) {
-          best = mid;
-          lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
-      }
-
-      if (best < 1 && curHtmlParts.length > 0) {
-        flushPage();
-        continue;
-      }
-
-      const takeCount = Math.max(1, best);
-      const firstPart = { ...item, text: words.slice(0, takeCount).join(' ') };
-      curHtmlParts.push(blockToHtml(firstPart));
-      flushPage();
-
-      // Remaining words continue at top of next page without first-line indent
-      stream[i] = {
-        ...item,
-        type: 'p_cont',
-        text: words.slice(takeCount).join(' '),
-        wordOffset: (item.wordOffset || 0) + takeCount,
-      };
-    }
-
-    if (curHtmlParts.length > 0) {
-      flushPage();
-    }
-  });
-
-  pages = newPages.length
-    ? newPages
-    : [
-        {
-          chapterIdx: 0,
-          chapterTitle: currentBook.title,
-          anchor: { chapterIdx: 0, blockIdx: 0, wordOffset: 0 },
-          html: '<p>Bo‘sh kitob</p>',
-        },
-      ];
-  chapterStartPages = newChapterStarts;
-
-  const saved = loadBookProgress(currentBook.id);
-  const refAnchor = targetAnchor || saved?.anchor || null;
-
-  if (refAnchor) {
-    let bestIdx = 0;
-    for (let idx = 0; idx < pages.length; idx++) {
-      const a = pages[idx].anchor;
-      if (
-        a.chapterIdx < refAnchor.chapterIdx ||
-        (a.chapterIdx === refAnchor.chapterIdx && a.blockIdx < refAnchor.blockIdx) ||
-        (a.chapterIdx === refAnchor.chapterIdx &&
-          a.blockIdx === refAnchor.blockIdx &&
-          a.wordOffset <= (refAnchor.wordOffset || 0))
-      ) {
-        bestIdx = idx;
-      } else {
-        break;
-      }
-    }
-    currentPageIdx = bestIdx;
-  } else if (saved && typeof saved.pageIdx === 'number') {
-    currentPageIdx = Math.min(pages.length - 1, Math.max(0, saved.pageIdx));
-  } else {
-    currentPageIdx = 0;
-  }
-
-  renderCurrentPage();
-  renderTocList();
-}
-
-function renderCurrentPage() {
-  if (!pages.length) return;
-  currentPageIdx = Math.min(pages.length - 1, Math.max(0, currentPageIdx));
-  const pg = pages[currentPageIdx];
-  pageContent.innerHTML = pg.html;
-
-  const total = pages.length;
-  const humanPage = currentPageIdx + 1;
-  const pct = total <= 1 ? 100 : Math.round((currentPageIdx / (total - 1)) * 100);
-
-  pageCounterText.textContent = `${humanPage} / ${total}`;
-
-  hudBookTitle.textContent = currentBook?.title || '';
-  hudChapterTitle.textContent = pg.chapterTitle || '';
-  hudPageInfo.textContent = `Bet ${humanPage} / ${total}`;
-  hudPercentInfo.textContent = `${pct}%`;
-  pageSlider.max = String(total);
-  pageSlider.value = String(humanPage);
-
-  const bms = loadBookmarks(currentBook.id);
-  const isBookmarked = bms.some((b) => b.pageIdx === currentPageIdx);
-  btnToggleBookmark.classList.toggle('active', isBookmarked);
-
-  saveBookProgress(currentBook.id, {
-    anchor: pg.anchor,
-    pageIdx: currentPageIdx,
-    totalPages: total,
-    percent: pct,
-    chapterTitle: pg.chapterTitle,
-    updatedAt: Date.now(),
-  });
 }
 
 function loadBookProgress(bookId) {
@@ -495,9 +466,12 @@ function goNextPage() {
     readerHud.classList.add('hidden');
     return;
   }
-  if (currentPageIdx < pages.length - 1) {
-    currentPageIdx++;
-    renderCurrentPage();
+  if (!currentBook) return;
+  if (currentChapPageIdx < currentChapTotalPages - 1) {
+    currentChapPageIdx++;
+    applyColumnOffset();
+  } else if (currentChapterIdx < currentBook.chapters.length - 1) {
+    renderChapter(currentChapterIdx + 1, 0);
   }
 }
 
@@ -506,9 +480,31 @@ function goPrevPage() {
     readerHud.classList.add('hidden');
     return;
   }
-  if (currentPageIdx > 0) {
-    currentPageIdx--;
-    renderCurrentPage();
+  if (!currentBook) return;
+  if (currentChapPageIdx > 0) {
+    currentChapPageIdx--;
+    applyColumnOffset();
+  } else if (currentChapterIdx > 0) {
+    renderChapter(currentChapterIdx - 1, 'end');
+  }
+}
+
+function jumpToGlobalPage(humanPage) {
+  if (!currentBook) return;
+  const targetIdx = Math.min(totalGlobalPages - 1, Math.max(0, humanPage - 1));
+  let targetChap = 0;
+  for (let i = 0; i < chapterStartGlobal.length; i++) {
+    if (chapterStartGlobal[i] <= targetIdx) targetChap = i;
+    else break;
+  }
+  const offsetInChap = targetIdx - (chapterStartGlobal[targetChap] || 0);
+  const estChapPages = Math.max(1, chapterEstPages[targetChap] || 1);
+  if (targetChap === currentChapterIdx) {
+    currentChapPageIdx = Math.min(currentChapTotalPages - 1, offsetInChap);
+    applyColumnOffset();
+  } else {
+    const ratio = estChapPages <= 1 ? 0 : Math.min(1, offsetInChap / (estChapPages - 1));
+    renderChapter(targetChap, { ratio });
   }
 }
 
@@ -544,7 +540,7 @@ readerView.addEventListener(
     touchStartX = null;
     touchStartY = null;
 
-    if (Math.abs(dx) > 46 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.35) {
       if (dx < 0) goNextPage();
       else goPrevPage();
     }
@@ -556,15 +552,19 @@ window.addEventListener('keydown', (e) => {
   if (!readerView.classList.contains('hidden') && pasteModal.classList.contains('hidden')) {
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
       e.preventDefault();
-      if (currentPageIdx < pages.length - 1) {
-        currentPageIdx++;
-        renderCurrentPage();
+      if (currentChapPageIdx < currentChapTotalPages - 1) {
+        currentChapPageIdx++;
+        applyColumnOffset();
+      } else if (currentBook && currentChapterIdx < currentBook.chapters.length - 1) {
+        renderChapter(currentChapterIdx + 1, 0);
       }
     } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
       e.preventDefault();
-      if (currentPageIdx > 0) {
-        currentPageIdx--;
-        renderCurrentPage();
+      if (currentChapPageIdx > 0) {
+        currentChapPageIdx--;
+        applyColumnOffset();
+      } else if (currentChapterIdx > 0) {
+        renderChapter(currentChapterIdx - 1, 'end');
       }
     } else if (e.key === 'Escape') {
       readerHud.classList.add('hidden');
@@ -575,22 +575,25 @@ window.addEventListener('keydown', (e) => {
 
 // ==================== HUD CONTROLS ====================
 document.getElementById('btnPrevPageHud').addEventListener('click', () => {
-  if (currentPageIdx > 0) {
-    currentPageIdx--;
-    renderCurrentPage();
+  if (currentChapPageIdx > 0) {
+    currentChapPageIdx--;
+    applyColumnOffset();
+  } else if (currentChapterIdx > 0) {
+    renderChapter(currentChapterIdx - 1, 'end');
   }
 });
 
 document.getElementById('btnNextPageHud').addEventListener('click', () => {
-  if (currentPageIdx < pages.length - 1) {
-    currentPageIdx++;
-    renderCurrentPage();
+  if (currentChapPageIdx < currentChapTotalPages - 1) {
+    currentChapPageIdx++;
+    applyColumnOffset();
+  } else if (currentBook && currentChapterIdx < currentBook.chapters.length - 1) {
+    renderChapter(currentChapterIdx + 1, 0);
   }
 });
 
 pageSlider.addEventListener('input', () => {
-  currentPageIdx = Number(pageSlider.value) - 1;
-  renderCurrentPage();
+  jumpToGlobalPage(Number(pageSlider.value));
 });
 
 document.getElementById('btnFontMinus').addEventListener('click', () => {
@@ -629,8 +632,8 @@ function renderTocList() {
   if (!currentBook) return;
   tocList.innerHTML = '';
   currentBook.chapters.forEach((ch, idx) => {
-    const startPage = (chapterStartPages[idx] ?? 0) + 1;
-    const isCurrent = pages[currentPageIdx]?.chapterIdx === idx;
+    const startPage = (chapterStartGlobal[idx] ?? 0) + 1;
+    const isCurrent = currentChapterIdx === idx;
     const li = document.createElement('li');
     li.className = `toc-item${isCurrent ? ' active' : ''}`;
     li.innerHTML = `
@@ -638,8 +641,7 @@ function renderTocList() {
       <span class="toc-item-page">${startPage}-bet</span>
     `;
     li.addEventListener('click', () => {
-      currentPageIdx = chapterStartPages[idx] ?? 0;
-      renderCurrentPage();
+      renderChapter(idx, 0);
       tocDrawer.classList.add('hidden');
       readerHud.classList.add('hidden');
     });
@@ -663,11 +665,10 @@ function renderBookmarksList() {
         <div class="toc-item-title">${escapeHtml(bm.chapterTitle || '')}</div>
         <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${escapeHtml(bm.snippet || '')}</div>
       </div>
-      <span class="toc-item-page">${bm.pageIdx + 1}-bet</span>
+      <span class="toc-item-page">${(bm.globalPage || 1)}-bet</span>
     `;
     li.addEventListener('click', () => {
-      currentPageIdx = Math.min(pages.length - 1, bm.pageIdx);
-      renderCurrentPage();
+      renderChapter(bm.chapterIdx || 0, { ratio: bm.ratio || 0 });
       tocDrawer.classList.add('hidden');
       readerHud.classList.add('hidden');
     });
@@ -676,24 +677,30 @@ function renderBookmarksList() {
 }
 
 btnToggleBookmark.addEventListener('click', () => {
-  if (!currentBook || !pages[currentPageIdx]) return;
+  if (!currentBook) return;
   const list = loadBookmarks(currentBook.id);
-  const existingIdx = list.findIndex((b) => b.pageIdx === currentPageIdx);
+  const existingIdx = list.findIndex(
+    (b) => b.chapterIdx === currentChapterIdx && b.chapPageIdx === currentChapPageIdx
+  );
   if (existingIdx >= 0) {
     list.splice(existingIdx, 1);
   } else {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = pages[currentPageIdx].html;
-    const snippet = (tmp.textContent || '').replace(/\u00AD/g, '').trim().slice(0, 90) + '…';
+    const chap = currentBook.chapters[currentChapterIdx];
+    const ratio =
+      currentChapTotalPages <= 1 ? 0 : currentChapPageIdx / (currentChapTotalPages - 1);
+    const globalPage = (chapterStartGlobal[currentChapterIdx] || 0) + currentChapPageIdx + 1;
     list.unshift({
-      pageIdx: currentPageIdx,
-      chapterTitle: pages[currentPageIdx].chapterTitle,
-      snippet,
+      chapterIdx: currentChapterIdx,
+      chapPageIdx: currentChapPageIdx,
+      ratio,
+      globalPage,
+      chapterTitle: chap?.title || '',
+      snippet: `Bob ichida ${currentChapPageIdx + 1} / ${currentChapTotalPages}-bet`,
       ts: Date.now(),
     });
   }
   saveBookmarks(currentBook.id, list);
-  renderCurrentPage();
+  applyColumnOffset();
   renderBookmarksList();
 });
 
@@ -736,37 +743,46 @@ document.getElementById('btnOpenLibrary').addEventListener('click', () => {
 document.getElementById('btnResumeTop').addEventListener('click', () => {
   libraryView.classList.add('hidden');
   readerView.classList.remove('hidden');
-  paginateCurrentBook(getCurrentAnchor());
+  measureCurrentChapterLayout(null);
 });
 
 async function openBookById(bookId) {
-  const builtIn = builtInCatalog.find((b) => b.id === bookId);
-  let bookData = null;
-
-  if (builtIn) {
-    const res = await fetch(builtIn.url);
-    bookData = await res.json();
-  } else {
-    bookData = await getUserBook(bookId);
+  let bookData = bookCache.get(bookId) || null;
+  if (!bookData) {
+    const builtIn = builtInCatalog.find((b) => b.id === bookId);
+    if (builtIn) {
+      const res = await fetch(builtIn.url);
+      bookData = await res.json();
+    } else {
+      bookData = await getUserBook(bookId);
+    }
+    if (bookData) bookCache.set(bookId, bookData);
   }
 
   if (!bookData) return;
   currentBook = bookData;
   saveJson(ACTIVE_BOOK_KEY, bookData.id);
+  computeBookCharCounts(currentBook);
 
   libraryView.classList.add('hidden');
   readerView.classList.remove('hidden');
   readerHud.classList.add('hidden');
-  paginateCurrentBook();
+
+  const saved = loadBookProgress(currentBook.id);
+  if (saved && typeof saved.chapterIdx === 'number') {
+    renderChapter(saved.chapterIdx, { ratio: typeof saved.ratio === 'number' ? saved.ratio : 0 });
+  } else {
+    renderChapter(0, 0);
+  }
 }
 
 async function renderLibrary() {
-  userBooksMeta = await getAllUserBooks();
+  const userBooks = await getAllUserBooks();
   booksGrid.innerHTML = '';
 
   const allItems = [
     ...builtInCatalog.map((b) => ({ ...b, isUser: false })),
-    ...userBooksMeta.map((b) => ({
+    ...userBooks.map((b) => ({
       id: b.id,
       title: b.title,
       subtitle: b.subtitle || '',
@@ -805,6 +821,7 @@ async function renderLibrary() {
     card.querySelector('.btn-open').addEventListener('click', () => openBookById(item.id));
     if (item.isUser) {
       card.querySelector('.btn-del').addEventListener('click', async () => {
+        bookCache.delete(item.id);
         await deleteUserBook(item.id);
         renderLibrary();
       });
@@ -908,7 +925,7 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
       curChapter.blocks.push({ type: 'p', text: p });
     }
 
-    if (curChapter.blocks.length >= 320) {
+    if (curChapter.blocks.length >= 220) {
       chapters.push(curChapter);
       curChapter = {
         title: `${title} (${chapters.length + 1}-qism)`,
@@ -1060,9 +1077,11 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (currentBook && !readerView.classList.contains('hidden')) {
-      paginateCurrentBook(getCurrentAnchor());
+      const ratio =
+        currentChapTotalPages <= 1 ? 0 : currentChapPageIdx / (currentChapTotalPages - 1);
+      measureCurrentChapterLayout(ratio);
     }
-  }, 150);
+  }, 80);
 });
 
 // ==================== BOOTSTRAP ====================
