@@ -48,8 +48,8 @@ html[data-theme="day"] {
 }
 
 :root {
-  --reader-font-size: 22px;
-  --reader-line-height: 1.58;
+  --reader-font-size: 20px;
+  --reader-line-height: 1.42;
   --reader-font-family: Georgia, 'Noto Serif', 'Times New Roman', Times, serif;
 }
 
@@ -116,7 +116,7 @@ body {
   width: 100%;
   max-width: 660px;
   flex: 1;
-  padding: max(22px, env(safe-area-inset-top, 20px)) 24px 6px 24px;
+  padding: max(10px, env(safe-area-inset-top, 10px)) 16px 2px 16px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -137,31 +137,43 @@ body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   color: var(--text);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 
 .page-content p {
   text-align: justify;
-  hyphens: auto;
-  -webkit-hyphens: auto;
+  hyphens: manual;
+  -webkit-hyphens: manual;
   overflow-wrap: break-word;
-  margin-bottom: 0.55em;
+  margin-bottom: 0.24em;
+  text-indent: 0.9em;
+}
+
+.page-content p.no-indent {
+  text-indent: 0;
 }
 
 .page-content p.dialogue {
-  text-align: left;
+  text-align: justify;
+  hyphens: manual;
+  -webkit-hyphens: manual;
+  text-indent: 0.9em;
+}
+
+.page-content > *:last-child {
+  margin-bottom: 0 !important;
 }
 
 /* Exact screenshot style for section titles: centered uppercase serif */
 .page-content h1.reader-ch-title {
-  font-size: 1.18em;
+  font-size: 1.12em;
   font-weight: normal;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-align: center;
   color: var(--heading);
-  margin: 0.35em 0 0.7em 0;
-  line-height: 1.35;
+  margin: 0.25em 0 0.45em 0;
+  line-height: 1.3;
 }
 
 .page-content div.reader-ch-sub {
@@ -169,34 +181,35 @@ body {
   text-align: center;
   color: var(--muted);
   font-size: 0.88em;
-  margin: -0.3em 0 0.85em 0;
+  margin: -0.2em 0 0.55em 0;
 }
 
 .page-content h2.reader-h2 {
-  font-size: 1.04em;
+  font-size: 1.02em;
   font-weight: normal;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   text-align: center;
   color: var(--heading);
-  margin: 0.8em 0 0.55em 0;
-  line-height: 1.32;
+  margin: 0.55em 0 0.38em 0;
+  line-height: 1.28;
 }
 
 .page-content div.reader-hr {
   text-align: center;
   color: var(--muted);
-  margin: 0.5em 0;
+  margin: 0.3em 0;
   letter-spacing: 0.35em;
 }
 
 .page-content p.reader-li {
   text-align: justify;
-  hyphens: auto;
-  -webkit-hyphens: auto;
+  hyphens: manual;
+  -webkit-hyphens: manual;
+  text-indent: 0;
   padding-left: 0.85em;
   position: relative;
-  margin-bottom: 0.45em;
+  margin-bottom: 0.22em;
 }
 
 .page-content p.reader-li::before {
@@ -209,13 +222,13 @@ body {
 /* Minimal bottom counter: exact screenshot style (213 / 484) */
 .minimal-footer {
   width: 100%;
-  height: calc(36px + env(safe-area-inset-bottom, 0px));
+  height: calc(26px + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--muted);
   letter-spacing: 0.03em;
   flex-shrink: 0;

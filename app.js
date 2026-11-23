@@ -1,12 +1,12 @@
 // ==================== STATE & STORAGE ====================
-const SETTINGS_KEY = 'kitobim_settings_v1';
+const SETTINGS_KEY = 'kitobim_settings_v2';
 const ACTIVE_BOOK_KEY = 'kitobim_active_book_v1';
 const DB_NAME = 'kitobim_user_books_db';
 const DB_STORE = 'books';
 
 const defaultSettings = {
-  fontSize: 22,
-  lineHeight: 1.58,
+  fontSize: 20,
+  lineHeight: 1.42,
   fontFamily: 'serif',
   theme: 'amoled',
 };
@@ -15,8 +15,8 @@ let settings = { ...defaultSettings, ...loadJson(SETTINGS_KEY, {}) };
 let builtInCatalog = [];
 let userBooksMeta = [];
 let currentBook = null;
-let pages = []; // Array of { chapterIdx, chapterTitle, anchor, html }
-let chapterStartPages = []; // Array of page indices (0-based)
+let pages = [];
+let chapterStartPages = [];
 let currentPageIdx = 0;
 
 // ==================== DOM ELEMENTS ====================
@@ -50,7 +50,7 @@ const pasteModal = document.getElementById('pasteModal');
 const pasteTitleInput = document.getElementById('pasteTitleInput');
 const pasteTextarea = document.getElementById('pasteTextarea');
 
-// ==================== HELPERS ====================
+// ==================== HELPERS & UZBEK/RUSSIAN SOFT-HYPHENATOR ====================
 function loadJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -74,8 +74,88 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function formatInline(str) {
-  let s = escapeHtml(str);
+const UZ_RU_VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я', 'ў']);
+const SHY = '\u00AD';
+
+function hyphenateWord(word) {
+  if (word.length < 5) return word;
+  const m = word.match(
+    /^([^A-Za-z\u0400-\u04FF\u2018\u2019\u02BB']*)([A-Za-z\u0400-\u04FF\u2018\u2019\u02BB'-]+)([^A-Za-z\u0400-\u04FF\u2018\u2019\u02BB']*)$/
+  );
+  if (!m) return word;
+  const [, pre, core, post] = m;
+  if (core.includes('-')) {
+    return pre + core.split('-').map(hyphenateWord).join('-') + post;
+  }
+
+  // Tokenize Uzbek multi-character phonemes (o‘, g‘, sh, ch, ng) and Russian letters
+  const tokens = [];
+  const lower = core.toLowerCase();
+  let i = 0;
+  while (i < core.length) {
+    const two = lower.slice(i, i + 2);
+    const nextChar = core[i + 1];
+    if (
+      (lower[i] === 'o' || lower[i] === 'g') &&
+      (nextChar === '\u2018' || nextChar === "'" || nextChar === '\u02BB')
+    ) {
+      tokens.push({ t: core.slice(i, i + 2), v: lower[i] === 'o' });
+      i += 2;
+    } else if (two === 'sh' || two === 'ch' || two === 'ng') {
+      tokens.push({ t: core.slice(i, i + 2), v: false });
+      i += 2;
+    } else if (
+      (core[i] === '\u2019' || core[i] === "'" || lower[i] === 'ъ' || lower[i] === 'ь') &&
+      tokens.length > 0
+    ) {
+      tokens[tokens.length - 1].t += core[i];
+      i += 1;
+    } else {
+      tokens.push({ t: core[i], v: UZ_RU_VOWELS.has(lower[i]) });
+      i += 1;
+    }
+  }
+
+  if (tokens.length < 4) return word;
+  const vIdx = [];
+  for (let idx = 0; idx < tokens.length; idx++) {
+    if (tokens[idx].v) vIdx.push(idx);
+  }
+  if (vIdx.length < 2) return word;
+
+  const breaks = new Set();
+  for (let k = 0; k < vIdx.length - 1; k++) {
+    const v1 = vIdx[k];
+    const v2 = vIdx[k + 1];
+    const cCount = v2 - v1 - 1;
+    let splitAfter;
+    if (cCount <= 1) splitAfter = v1;
+    else if (cCount === 2) splitAfter = v1 + 1;
+    else splitAfter = v1 + 2;
+
+    if (splitAfter >= 1 && splitAfter <= tokens.length - 3) {
+      breaks.add(splitAfter);
+    }
+  }
+
+  let out = '';
+  for (let idx = 0; idx < tokens.length; idx++) {
+    out += tokens[idx].t;
+    if (breaks.has(idx)) out += SHY;
+  }
+  return pre + out + post;
+}
+
+function hyphenateText(text) {
+  return String(text)
+    .split(/(\s+)/)
+    .map((part) => (/\s/.test(part) ? part : hyphenateWord(part)))
+    .join('');
+}
+
+function formatInline(str, useHyphens = true) {
+  const src = useHyphens ? hyphenateText(str) : String(str);
+  let s = escapeHtml(src);
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
   return s;
@@ -171,19 +251,21 @@ function applySettings(rePaginate = true) {
 function blockToHtml(block) {
   switch (block.type) {
     case 'ch_title':
-      return `<h1 class="reader-ch-title">${formatInline(block.text)}</h1>`;
+      return `<h1 class="reader-ch-title">${formatInline(block.text, false)}</h1>`;
     case 'subtitle':
-      return `<div class="reader-ch-sub">${formatInline(block.text)}</div>`;
+      return `<div class="reader-ch-sub">${formatInline(block.text, false)}</div>`;
     case 'h2':
-      return `<h2 class="reader-h2">${formatInline(block.text)}</h2>`;
+      return `<h2 class="reader-h2">${formatInline(block.text, false)}</h2>`;
     case 'hr':
       return `<div class="reader-hr">&#8226;&nbsp;&nbsp;&#8226;&nbsp;&nbsp;&#8226;</div>`;
     case 'li':
-      return `<p class="reader-li">${formatInline(block.text)}</p>`;
+      return `<p class="reader-li">${formatInline(block.text, true)}</p>`;
+    case 'p_cont':
+      return `<p class="no-indent">${formatInline(block.text, true)}</p>`;
     case 'p':
     default: {
       const isDlg = block.text.startsWith('—') || block.text.startsWith('– ');
-      return `<p class="${isDlg ? 'dialogue' : ''}">${formatInline(block.text)}</p>`;
+      return `<p class="${isDlg ? 'dialogue' : ''}">${formatInline(block.text, true)}</p>`;
     }
   }
 }
@@ -196,7 +278,6 @@ function getCurrentAnchor() {
 function paginateCurrentBook(targetAnchor = null) {
   if (!currentBook) return;
 
-  // Match exact available inner width and height of pageViewport
   const styles = window.getComputedStyle(pageViewport);
   const availW =
     pageViewport.clientWidth -
@@ -218,7 +299,6 @@ function paginateCurrentBook(targetAnchor = null) {
   currentBook.chapters.forEach((chapter, cIdx) => {
     newChapterStarts[cIdx] = newPages.length;
 
-    // Build block stream for this chapter
     const stream = [{ type: 'ch_title', text: chapter.title, blockIdx: -1, wordOffset: 0 }];
     (chapter.blocks || []).forEach((b, bIdx) => {
       stream.push({ ...b, blockIdx: bIdx, wordOffset: 0 });
@@ -261,16 +341,15 @@ function paginateCurrentBook(targetAnchor = null) {
         continue;
       }
 
-      // Doesn't fit completely. If it's a heading or short non-paragraph and page isn't empty, push to next page
       const words = (item.text || '').trim().split(/\s+/).filter(Boolean);
-      const isSplittable = (item.type === 'p' || item.type === 'li') && words.length >= 14;
+      const isSplittable =
+        (item.type === 'p' || item.type === 'p_cont' || item.type === 'li') && words.length >= 2;
 
       if (!isSplittable) {
         if (curHtmlParts.length > 0) {
           flushPage();
-          continue; // retry item on fresh page
+          continue;
         } else {
-          // Force place even if tall
           curHtmlParts.push(candidateHtml);
           flushPage();
           i++;
@@ -278,7 +357,7 @@ function paginateCurrentBook(targetAnchor = null) {
         }
       }
 
-      // Binary search how many words of this paragraph fit on the current page
+      // Binary search how many words fit on the remaining space of this page
       let lo = 1;
       let hi = words.length - 1;
       let best = 0;
@@ -295,8 +374,7 @@ function paginateCurrentBook(targetAnchor = null) {
         }
       }
 
-      // Avoid leaving a tiny 1-4 word widow at bottom of page if page already has content
-      if (best < 6 && curHtmlParts.length > 0) {
+      if (best < 1 && curHtmlParts.length > 0) {
         flushPage();
         continue;
       }
@@ -306,10 +384,10 @@ function paginateCurrentBook(targetAnchor = null) {
       curHtmlParts.push(blockToHtml(firstPart));
       flushPage();
 
-      // Replace current stream item with remaining words for the next page
+      // Remaining words continue at top of next page without first-line indent
       stream[i] = {
         ...item,
-        type: 'p',
+        type: 'p_cont',
         text: words.slice(takeCount).join(' '),
         wordOffset: (item.wordOffset || 0) + takeCount,
       };
@@ -322,10 +400,16 @@ function paginateCurrentBook(targetAnchor = null) {
 
   pages = newPages.length
     ? newPages
-    : [{ chapterIdx: 0, chapterTitle: currentBook.title, anchor: { chapterIdx: 0, blockIdx: 0, wordOffset: 0 }, html: '<p>Bo‘sh kitob</p>' }];
+    : [
+        {
+          chapterIdx: 0,
+          chapterTitle: currentBook.title,
+          anchor: { chapterIdx: 0, blockIdx: 0, wordOffset: 0 },
+          html: '<p>Bo‘sh kitob</p>',
+        },
+      ];
   chapterStartPages = newChapterStarts;
 
-  // Restore exact reading position from targetAnchor or saved progress
   const saved = loadBookProgress(currentBook.id);
   const refAnchor = targetAnchor || saved?.anchor || null;
 
@@ -366,10 +450,8 @@ function renderCurrentPage() {
   const humanPage = currentPageIdx + 1;
   const pct = total <= 1 ? 100 : Math.round((currentPageIdx / (total - 1)) * 100);
 
-  // Exact screenshot footer: 213 / 484
   pageCounterText.textContent = `${humanPage} / ${total}`;
 
-  // HUD labels
   hudBookTitle.textContent = currentBook?.title || '';
   hudChapterTitle.textContent = pg.chapterTitle || '';
   hudPageInfo.textContent = `Bet ${humanPage} / ${total}`;
@@ -377,12 +459,10 @@ function renderCurrentPage() {
   pageSlider.max = String(total);
   pageSlider.value = String(humanPage);
 
-  // Bookmark highlight
   const bms = loadBookmarks(currentBook.id);
   const isBookmarked = bms.some((b) => b.pageIdx === currentPageIdx);
   btnToggleBookmark.classList.toggle('active', isBookmarked);
 
-  // Save reading progress automatically
   saveBookProgress(currentBook.id, {
     anchor: pg.anchor,
     pageIdx: currentPageIdx,
@@ -440,7 +520,6 @@ document.getElementById('tapZoneLeft').addEventListener('click', goPrevPage);
 document.getElementById('tapZoneRight').addEventListener('click', goNextPage);
 document.getElementById('tapZoneCenter').addEventListener('click', toggleHud);
 
-// Touch swipe support on readerView
 let touchStartX = null;
 let touchStartY = null;
 
@@ -473,7 +552,6 @@ readerView.addEventListener(
   { passive: true }
 );
 
-// Keyboard navigation
 window.addEventListener('keydown', (e) => {
   if (!readerView.classList.contains('hidden') && pasteModal.classList.contains('hidden')) {
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
@@ -516,12 +594,12 @@ pageSlider.addEventListener('input', () => {
 });
 
 document.getElementById('btnFontMinus').addEventListener('click', () => {
-  settings.fontSize = Math.max(15, settings.fontSize - 2);
+  settings.fontSize = Math.max(15, settings.fontSize - 1);
   applySettings(true);
 });
 
 document.getElementById('btnFontPlus').addEventListener('click', () => {
-  settings.fontSize = Math.min(36, settings.fontSize + 2);
+  settings.fontSize = Math.min(36, settings.fontSize + 1);
   applySettings(true);
 });
 
@@ -577,7 +655,7 @@ function renderBookmarksList() {
     bookmarksList.innerHTML = `<li class="toc-item"><span class="toc-item-title">Hali xatcho‘p qo‘shilmagan (yuqoridagi 🔖 tugmasini bosing)</span></li>`;
     return;
   }
-  list.forEach((bm, idx) => {
+  list.forEach((bm) => {
     const li = document.createElement('li');
     li.className = 'toc-item';
     li.innerHTML = `
@@ -606,7 +684,7 @@ btnToggleBookmark.addEventListener('click', () => {
   } else {
     const tmp = document.createElement('div');
     tmp.innerHTML = pages[currentPageIdx].html;
-    const snippet = (tmp.textContent || '').trim().slice(0, 90) + '…';
+    const snippet = (tmp.textContent || '').replace(/\u00AD/g, '').trim().slice(0, 90) + '…';
     list.unshift({
       pageIdx: currentPageIdx,
       chapterTitle: pages[currentPageIdx].chapterTitle,
@@ -742,7 +820,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
     .replace(/\r/g, '\n')
     .split('\n');
 
-  // Step 1: Strip standalone page number lines (e.g. "213", "— 14 —", "213 / 484")
   const filtered = lines.filter((line) => {
     const s = line.trim();
     if (!s) return true;
@@ -750,7 +827,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
     return true;
   });
 
-  // Step 2: Merge broken mid-sentence PDF lines into paragraphs
   const paragraphs = [];
   let buf = '';
 
@@ -768,14 +844,12 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
       continue;
     }
 
-    // Markdown headings or clear chapter titles
     if (/^#{1,3}\s+/.test(line) || /^(?:\d+-bob|Глава\s+\d+|Chapter\s+\d+|BOB\s+\d+)/i.test(line)) {
       flushBuf();
       paragraphs.push(line);
       continue;
     }
 
-    // Short ALL-CAPS heading line (like "ОСНОВЫ БИЗНЕСА" in screenshot)
     const isAllCapsHeading =
       line.length >= 3 &&
       line.length <= 75 &&
@@ -789,7 +863,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
       continue;
     }
 
-    // Dialogue line starts a new paragraph
     if (/^[—–-]\s+/.test(line)) {
       flushBuf();
       buf = line;
@@ -799,7 +872,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
     if (!buf) {
       buf = line;
     } else if (buf.endsWith('-') && /^[a-zа-яёўқғҳ]/.test(line)) {
-      // Hyphenated word break across lines
       buf = buf.slice(0, -1) + line;
     } else if (!/[.!?:»"”]$/.test(buf)) {
       buf += ' ' + line;
@@ -810,7 +882,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
   }
   flushBuf();
 
-  // Step 3: Build chapters & blocks
   let title = rawTitle.trim();
   if (!title && paragraphs.length > 0) {
     title = paragraphs[0].replace(/^#+\s*/, '').slice(0, 75);
@@ -837,7 +908,6 @@ function smartCleanAndStructureText(rawText, rawTitle = '') {
       curChapter.blocks.push({ type: 'p', text: p });
     }
 
-    // If a single chapter exceeds ~350 blocks without chapter headings, auto-split into parts
     if (curChapter.blocks.length >= 320) {
       chapters.push(curChapter);
       curChapter = {
@@ -1000,7 +1070,7 @@ async function init() {
   applySettings(false);
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js').then((reg) => reg.update()).catch(() => {});
   }
 
   try {

@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=2" />
 </head>
 <body>
   <!-- ==================== READER VIEW (DEFAULT) ==================== -->
@@ -73,7 +73,7 @@
             <span class="hud-label">Yozuv kattaligi</span>
             <div class="hud-stepper">
               <button id="btnFontMinus" type="button">A−</button>
-              <span id="fontSizeLabel">22px</span>
+              <span id="fontSizeLabel">20px</span>
               <button id="btnFontPlus" type="button">A+</button>
             </div>
           </div>
@@ -81,9 +81,9 @@
           <div class="hud-control-group">
             <span class="hud-label">Qator orasi</span>
             <div class="hud-segmented" id="lineHeightGroup">
-              <button type="button" data-lh="1.42">Zich</button>
-              <button type="button" data-lh="1.58" class="active">O‘rta</button>
-              <button type="button" data-lh="1.78">Keng</button>
+              <button type="button" data-lh="1.35">Zich</button>
+              <button type="button" data-lh="1.42" class="active">O‘rta</button>
+              <button type="button" data-lh="1.58">Keng</button>
             </div>
           </div>
 
@@ -187,6 +187,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=2"></script>
 </body>
 </html>
