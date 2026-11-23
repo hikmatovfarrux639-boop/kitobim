@@ -11,24 +11,22 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="/styles.css?v=4" />
+  <link rel="stylesheet" href="/styles.css?v=6" />
 </head>
 <body>
   <!-- ==================== READER VIEW (DEFAULT) ==================== -->
   <main id="readerView" class="reader-view">
-    <!-- Invisible touch zones: Left (prev), Center (toggle HUD), Right (next) -->
-    <div id="tapZoneLeft" class="tap-zone tap-left" aria-label="Oldingi bet"></div>
-    <div id="tapZoneCenter" class="tap-zone tap-center" aria-label="Menyuni ochish"></div>
-    <div id="tapZoneRight" class="tap-zone tap-right" aria-label="Keyingi bet"></div>
+    <!-- Subtle toast notification for highlights/bookmarks -->
+    <div id="readerToast" class="reader-toast hidden"></div>
 
-    <!-- Actual rendered book viewport (instant CSS multi-column) -->
+    <!-- Actual rendered book viewport (instant CSS multi-column + smooth slide) -->
     <div id="pageViewport" class="page-viewport">
       <div id="pageColumnMask" class="page-column-mask">
         <article id="pageContent" class="page-content" lang="uz"></article>
       </div>
     </div>
 
-    <!-- Minimal bottom page counter (always visible, exact screenshot style: 213 / 484) -->
+    <!-- Minimal bottom page counter (exact screenshot style: 213 / 484) -->
     <footer id="minimalFooter" class="minimal-footer">
       <span id="pageCounterText">1 / 1</span>
     </footer>
@@ -45,8 +43,9 @@
           <div id="hudChapterTitle" class="hud-chapter-title">1-bob</div>
         </div>
         <div class="hud-top-actions">
+          <button id="btnOpenSearch" class="hud-icon-btn" type="button" title="Kitob ichidan qidirish">🔍</button>
           <button id="btnToggleBookmark" class="hud-icon-btn" type="button" title="Xatcho‘p qo‘shish">🔖</button>
-          <button id="btnOpenToc" class="hud-btn" type="button">☰ Boblar</button>
+          <button id="btnOpenToc" class="hud-btn" type="button">☰</button>
         </div>
       </header>
 
@@ -58,6 +57,7 @@
             <input id="pageSlider" type="range" min="1" max="1" value="1" />
             <div class="hud-slider-labels">
               <span id="hudPageInfo">Bet 1 / 1</span>
+              <span id="hudTimeInfo">~1 daq</span>
               <span id="hudPercentInfo">0%</span>
             </div>
           </div>
@@ -101,23 +101,48 @@
               <button type="button" data-theme="day" class="theme-pill theme-day">Oq</button>
             </div>
           </div>
+
+          <div class="hud-control-group hud-full-row">
+            <div class="hud-dimmer-row">
+              <span class="hud-label">Kechki yorqinlik (Dimmer)</span>
+              <span id="dimmerLabel" class="hud-label">100%</span>
+            </div>
+            <input id="dimmerSlider" type="range" min="45" max="100" step="5" value="100" />
+          </div>
         </div>
+
+        <div class="hud-tip">Maslahat: yoqqan abzasni 0.5 soniya bosib tursangiz — iqtibos sifatida belgilanadi ✨</div>
       </section>
     </div>
 
-    <!-- Chapters & Bookmarks Drawer -->
+    <!-- Chapters, Bookmarks & Highlights Drawer -->
     <aside id="tocDrawer" class="drawer hidden">
       <div id="tocBackdrop" class="drawer-backdrop"></div>
       <div class="drawer-panel">
         <div class="drawer-header">
           <div class="drawer-tabs">
             <button id="tabBtnChapters" class="drawer-tab active" type="button">Boblar</button>
-            <button id="tabBtnBookmarks" class="drawer-tab" type="button">Xatcho‘plar</button>
+            <button id="tabBtnBookmarks" class="drawer-tab" type="button">Xatcho‘p</button>
+            <button id="tabBtnHighlights" class="drawer-tab" type="button">Iqtiboslar</button>
           </div>
           <button id="btnCloseToc" class="drawer-close" type="button">✕</button>
         </div>
         <ul id="tocList" class="toc-list"></ul>
         <ul id="bookmarksList" class="toc-list hidden"></ul>
+        <ul id="highlightsList" class="toc-list hidden"></ul>
+      </div>
+    </aside>
+
+    <!-- In-Book Search Drawer -->
+    <aside id="searchDrawer" class="drawer hidden">
+      <div id="searchBackdrop" class="drawer-backdrop"></div>
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <input id="searchInput" class="search-input" type="search" placeholder="Kitob ichidan qidirish..." />
+          <button id="btnCloseSearch" class="drawer-close" type="button">✕</button>
+        </div>
+        <div id="searchMeta" class="search-meta">So‘z yozing (kamida 2 harf)</div>
+        <ul id="searchResults" class="toc-list"></ul>
       </div>
     </aside>
   </main>
@@ -184,6 +209,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=5"></script>
+  <script type="module" src="/app.js?v=6"></script>
 </body>
 </html>

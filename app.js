@@ -10,6 +10,7 @@ const defaultSettings = {
   lineHeight: 1.42,
   fontFamily: 'serif',
   theme: 'amoled',
+  dimmer: 100,
 };
 
 let settings = { ...defaultSettings, ...loadJson(SETTINGS_KEY, {}) };
@@ -25,28 +26,42 @@ let chapterCharCounts = [];
 let chapterEstPages = [];
 let chapterStartGlobal = [];
 let totalGlobalPages = 1;
+let wakeLockSentinel = null;
+let toastTimer = null;
 
 // ==================== DOM ELEMENTS ====================
 const readerView = document.getElementById('readerView');
 const libraryView = document.getElementById('libraryView');
+const pageViewport = document.getElementById('pageViewport');
 const pageColumnMask = document.getElementById('pageColumnMask');
 const pageContent = document.getElementById('pageContent');
 const pageCounterText = document.getElementById('pageCounterText');
+const readerToast = document.getElementById('readerToast');
 
 const readerHud = document.getElementById('readerHud');
 const hudBookTitle = document.getElementById('hudBookTitle');
 const hudChapterTitle = document.getElementById('hudChapterTitle');
 const hudPageInfo = document.getElementById('hudPageInfo');
+const hudTimeInfo = document.getElementById('hudTimeInfo');
 const hudPercentInfo = document.getElementById('hudPercentInfo');
 const pageSlider = document.getElementById('pageSlider');
 const fontSizeLabel = document.getElementById('fontSizeLabel');
+const dimmerSlider = document.getElementById('dimmerSlider');
+const dimmerLabel = document.getElementById('dimmerLabel');
 const btnToggleBookmark = document.getElementById('btnToggleBookmark');
 
 const tocDrawer = document.getElementById('tocDrawer');
 const tocList = document.getElementById('tocList');
 const bookmarksList = document.getElementById('bookmarksList');
+const highlightsList = document.getElementById('highlightsList');
 const tabBtnChapters = document.getElementById('tabBtnChapters');
 const tabBtnBookmarks = document.getElementById('tabBtnBookmarks');
+const tabBtnHighlights = document.getElementById('tabBtnHighlights');
+
+const searchDrawer = document.getElementById('searchDrawer');
+const searchInput = document.getElementById('searchInput');
+const searchMeta = document.getElementById('searchMeta');
+const searchResults = document.getElementById('searchResults');
 
 const booksGrid = document.getElementById('booksGrid');
 const importStatus = document.getElementById('importStatus');
@@ -55,7 +70,7 @@ const pasteModal = document.getElementById('pasteModal');
 const pasteTitleInput = document.getElementById('pasteTitleInput');
 const pasteTextarea = document.getElementById('pasteTextarea');
 
-// ==================== HELPERS & FAST SOFT-HYPHENATOR ====================
+// ==================== HELPERS & TOAST ====================
 function loadJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -79,6 +94,29 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function showToast(msg) {
+  readerToast.textContent = msg;
+  readerToast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => readerToast.classList.add('hidden'), 1800);
+}
+
+// ==================== SCREEN WAKE LOCK ====================
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  if (document.visibilityState !== 'visible') return;
+  try {
+    wakeLockSentinel = await navigator.wakeLock.request('screen');
+  } catch {}
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !readerView.classList.contains('hidden')) {
+    requestWakeLock();
+  }
+});
+
+// ==================== FAST UZBEK/RUSSIAN SOFT-HYPHENATOR ====================
 const UZ_RU_VOWELS = new Set([
   'a', 'e', 'i', 'o', 'u',
   'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я', 'ў',
@@ -275,6 +313,64 @@ async function deleteUserBook(id) {
   });
 }
 
+// ==================== HIGHLIGHTS STORAGE & APPLICATION ====================
+function loadHighlights(bookId) {
+  return loadJson(`kitobim_hl_${bookId}`, []);
+}
+
+function saveHighlights(bookId, list) {
+  saveJson(`kitobim_hl_${bookId}`, list);
+}
+
+function applyHighlightsToDom() {
+  if (!currentBook) return;
+  const hls = loadHighlights(currentBook.id);
+  const highlightedBlocks = new Set(
+    hls.filter((h) => h.chapterIdx === currentChapterIdx).map((h) => Number(h.blockIdx))
+  );
+  pageContent.querySelectorAll('p[data-b]').forEach((el) => {
+    const bIdx = Number(el.dataset.b);
+    el.classList.toggle('highlighted', highlightedBlocks.has(bIdx));
+  });
+}
+
+function toggleHighlightOnElement(el) {
+  if (!currentBook || !el) return;
+  const p = el.closest('p[data-b]');
+  if (!p) return;
+  const blockIdx = Number(p.dataset.b);
+  if (Number.isNaN(blockIdx) || blockIdx < 0) return;
+
+  const list = loadHighlights(currentBook.id);
+  const existingIdx = list.findIndex(
+    (h) => h.chapterIdx === currentChapterIdx && h.blockIdx === blockIdx
+  );
+
+  if (existingIdx >= 0) {
+    list.splice(existingIdx, 1);
+    p.classList.remove('highlighted');
+    showToast('Iqtibos olib tashlandi');
+  } else {
+    const chap = currentBook.chapters[currentChapterIdx];
+    const text = (chap?.blocks?.[blockIdx]?.text || p.textContent || '')
+      .replace(/\u00AD/g, '')
+      .trim();
+    const globalPage = (chapterStartGlobal[currentChapterIdx] || 0) + currentChapPageIdx + 1;
+    list.unshift({
+      chapterIdx: currentChapterIdx,
+      blockIdx,
+      chapterTitle: chap?.title || '',
+      globalPage,
+      text,
+      ts: Date.now(),
+    });
+    p.classList.add('highlighted');
+    showToast('Iqtibos saqlandi ✨');
+  }
+  saveHighlights(currentBook.id, list);
+  if (!tocDrawer.classList.contains('hidden')) renderHighlightsList();
+}
+
 // ==================== INSTANT NATIVE MULTI-COLUMN ENGINE (< 5ms) ====================
 function computeBookCharCounts(book) {
   chapterCharCounts = book.chapters.map((ch) => {
@@ -306,27 +402,25 @@ function updateGlobalPageEstimates() {
   totalGlobalPages = Math.max(1, running);
 }
 
-function measureCurrentChapterLayout(preserveRatio = null) {
+function measureCurrentChapterLayout(preserveRatio = null, targetBlockIdx = null) {
   if (!currentBook) return;
 
-  // Exact integer geometry so columns NEVER drift even by 0.5px
   const rect = pageColumnMask.getBoundingClientRect();
   colW = Math.max(180, Math.floor(rect.width));
   colH = Math.max(200, Math.floor(rect.height));
 
+  pageContent.classList.remove('animating');
   pageContent.style.setProperty('--col-w', `${colW}px`);
   pageContent.style.setProperty('--col-h', `${colH}px`);
   pageContent.style.setProperty('--col-gap', `${COL_GAP}px`);
-
-  // Temporarily reset transform to read exact column coordinates
   pageContent.style.transform = 'translate3d(0, 0, 0)';
 
   const stride = colW + COL_GAP;
+  const trackRect = pageContent.getBoundingClientRect();
   const sentinel = document.getElementById('colEndSentinel');
   let chapPages = 1;
 
   if (sentinel) {
-    const trackRect = pageContent.getBoundingClientRect();
     const sentRect = sentinel.getBoundingClientRect();
     const relLeft = sentRect.left - trackRect.left;
     if (relLeft >= 0) {
@@ -338,7 +432,14 @@ function measureCurrentChapterLayout(preserveRatio = null) {
 
   currentChapTotalPages = chapPages;
 
-  if (preserveRatio === 'end') {
+  if (typeof targetBlockIdx === 'number' && targetBlockIdx >= 0) {
+    const el = pageContent.querySelector(`[data-b="${targetBlockIdx}"]`);
+    if (el) {
+      const elRect = el.getBoundingClientRect();
+      const relLeft = Math.max(0, elRect.left - trackRect.left);
+      currentChapPageIdx = Math.min(currentChapTotalPages - 1, Math.floor((relLeft + 2) / stride));
+    }
+  } else if (preserveRatio === 'end') {
     currentChapPageIdx = currentChapTotalPages - 1;
   } else if (typeof preserveRatio === 'number') {
     currentChapPageIdx = Math.min(
@@ -350,7 +451,7 @@ function measureCurrentChapterLayout(preserveRatio = null) {
   }
 
   updateGlobalPageEstimates();
-  applyColumnOffset();
+  applyColumnOffset(false);
 }
 
 function renderChapter(chapterIdx, position = 0) {
@@ -358,9 +459,12 @@ function renderChapter(chapterIdx, position = 0) {
   currentChapterIdx = Math.min(currentBook.chapters.length - 1, Math.max(0, chapterIdx));
   const chapter = currentBook.chapters[currentChapterIdx];
   pageContent.innerHTML = getChapterHtml(chapter);
+  applyHighlightsToDom();
 
   if (position === 'end') {
     measureCurrentChapterLayout('end');
+  } else if (typeof position === 'object' && position !== null && typeof position.blockIdx === 'number') {
+    measureCurrentChapterLayout(null, position.blockIdx);
   } else if (typeof position === 'object' && position !== null && typeof position.ratio === 'number') {
     measureCurrentChapterLayout(position.ratio);
   } else {
@@ -369,10 +473,11 @@ function renderChapter(chapterIdx, position = 0) {
   }
 }
 
-function applyColumnOffset() {
+function applyColumnOffset(animate = false) {
   if (!currentBook) return;
   currentChapPageIdx = Math.min(currentChapTotalPages - 1, Math.max(0, currentChapPageIdx));
   const stride = colW + COL_GAP;
+  pageContent.classList.toggle('animating', Boolean(animate));
   pageContent.style.transform = `translate3d(${-currentChapPageIdx * stride}px, 0, 0)`;
 
   const globalPageIdx = (chapterStartGlobal[currentChapterIdx] || 0) + currentChapPageIdx;
@@ -381,11 +486,19 @@ function applyColumnOffset() {
     totalGlobalPages <= 1 ? 100 : Math.min(100, Math.round((globalPageIdx / (totalGlobalPages - 1)) * 100));
   const chapTitle = currentBook.chapters[currentChapterIdx]?.title || '';
 
-  pageCounterText.textContent = `${humanPage} / ${totalGlobalPages}`;
+  // Estimate remaining minutes in current chapter (~1200 chars/min reading speed)
+  const chapChars = chapterCharCounts[currentChapterIdx] || 1000;
+  const remFraction =
+    currentChapTotalPages <= 1
+      ? 0
+      : (currentChapTotalPages - 1 - currentChapPageIdx) / currentChapTotalPages;
+  const remMins = Math.max(1, Math.round((chapChars * remFraction) / 1150));
 
+  pageCounterText.textContent = `${humanPage} / ${totalGlobalPages}`;
   hudBookTitle.textContent = currentBook.title || '';
   hudChapterTitle.textContent = chapTitle;
   hudPageInfo.textContent = `Bet ${humanPage} / ${totalGlobalPages}`;
+  hudTimeInfo.textContent = `Bob oxirigacha ~${remMins} daq`;
   hudPercentInfo.textContent = `${pct}%`;
   pageSlider.max = String(totalGlobalPages);
   pageSlider.value = String(humanPage);
@@ -419,6 +532,7 @@ function applySettings(relayout = true) {
   document.documentElement.setAttribute('data-theme', settings.theme);
   document.documentElement.style.setProperty('--reader-font-size', `${settings.fontSize}px`);
   document.documentElement.style.setProperty('--reader-line-height', String(settings.lineHeight));
+  document.documentElement.style.setProperty('--reader-dimmer', String((settings.dimmer || 100) / 100));
   const ff =
     settings.fontFamily === 'sans'
       ? "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
@@ -426,6 +540,8 @@ function applySettings(relayout = true) {
   document.documentElement.style.setProperty('--reader-font-family', ff);
 
   fontSizeLabel.textContent = `${settings.fontSize}px`;
+  dimmerSlider.value = String(settings.dimmer || 100);
+  dimmerLabel.textContent = `${settings.dimmer || 100}%`;
 
   document.querySelectorAll('#lineHeightGroup button').forEach((btn) => {
     btn.classList.toggle('active', Number(btn.dataset.lh) === Number(settings.lineHeight));
@@ -460,8 +576,8 @@ function saveBookmarks(bookId, list) {
   saveJson(`kitobim_bm_${bookId}`, list);
 }
 
-// ==================== NAVIGATION & GESTURES ====================
-function goNextPage() {
+// ==================== NAVIGATION, LIVE DRAG SWIPE & LONG-PRESS HIGHLIGHT ====================
+function goNextPage(animate = true) {
   if (!readerHud.classList.contains('hidden')) {
     readerHud.classList.add('hidden');
     return;
@@ -469,13 +585,13 @@ function goNextPage() {
   if (!currentBook) return;
   if (currentChapPageIdx < currentChapTotalPages - 1) {
     currentChapPageIdx++;
-    applyColumnOffset();
+    applyColumnOffset(animate);
   } else if (currentChapterIdx < currentBook.chapters.length - 1) {
     renderChapter(currentChapterIdx + 1, 0);
   }
 }
 
-function goPrevPage() {
+function goPrevPage(animate = true) {
   if (!readerHud.classList.contains('hidden')) {
     readerHud.classList.add('hidden');
     return;
@@ -483,7 +599,7 @@ function goPrevPage() {
   if (!currentBook) return;
   if (currentChapPageIdx > 0) {
     currentChapPageIdx--;
-    applyColumnOffset();
+    applyColumnOffset(animate);
   } else if (currentChapterIdx > 0) {
     renderChapter(currentChapterIdx - 1, 'end');
   }
@@ -501,7 +617,7 @@ function jumpToGlobalPage(humanPage) {
   const estChapPages = Math.max(1, chapterEstPages[targetChap] || 1);
   if (targetChap === currentChapterIdx) {
     currentChapPageIdx = Math.min(currentChapTotalPages - 1, offsetInChap);
-    applyColumnOffset();
+    applyColumnOffset(false);
   } else {
     const ratio = estChapPages <= 1 ? 0 : Math.min(1, offsetInChap / (estChapPages - 1));
     renderChapter(targetChap, { ratio });
@@ -512,49 +628,143 @@ function toggleHud() {
   readerHud.classList.toggle('hidden');
 }
 
-document.getElementById('tapZoneLeft').addEventListener('click', goPrevPage);
-document.getElementById('tapZoneRight').addEventListener('click', goNextPage);
-document.getElementById('tapZoneCenter').addEventListener('click', toggleHud);
+// Unified touch + mouse gesture handler on pageViewport
+let ptrStartX = null;
+let ptrStartY = null;
+let ptrMoved = false;
+let longPressTimer = null;
+let longPressTriggered = false;
+let isDragging = false;
 
-let touchStartX = null;
-let touchStartY = null;
+function handleTapAt(clientX) {
+  const w = window.innerWidth || 360;
+  const rel = clientX / w;
+  if (rel < 0.32) goPrevPage(true);
+  else if (rel > 0.68) goNextPage(true);
+  else toggleHud();
+}
 
-readerView.addEventListener(
+pageViewport.addEventListener(
   'touchstart',
   (e) => {
-    if (!readerHud.classList.contains('hidden') || !tocDrawer.classList.contains('hidden')) return;
-    if (e.touches.length === 1) {
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
+    if (!tocDrawer.classList.contains('hidden') || !searchDrawer.classList.contains('hidden')) return;
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    ptrStartX = t.clientX;
+    ptrStartY = t.clientY;
+    ptrMoved = false;
+    isDragging = false;
+    longPressTriggered = false;
+
+    const targetEl = e.target;
+    clearTimeout(longPressTimer);
+    if (readerHud.classList.contains('hidden')) {
+      longPressTimer = setTimeout(() => {
+        if (!ptrMoved) {
+          longPressTriggered = true;
+          toggleHighlightOnElement(targetEl);
+        }
+      }, 450);
     }
   },
   { passive: true }
 );
 
-readerView.addEventListener(
+pageViewport.addEventListener(
+  'touchmove',
+  (e) => {
+    if (ptrStartX === null || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - ptrStartX;
+    const dy = t.clientY - ptrStartY;
+
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      ptrMoved = true;
+      clearTimeout(longPressTimer);
+    }
+
+    if (
+      readerHud.classList.contains('hidden') &&
+      Math.abs(dx) > 14 &&
+      Math.abs(dx) > Math.abs(dy) * 1.2
+    ) {
+      isDragging = true;
+      const stride = colW + COL_GAP;
+      const baseOffset = -currentChapPageIdx * stride;
+      // Add subtle resistance at chapter edges
+      const atStart = currentChapPageIdx === 0 && dx > 0;
+      const atEnd = currentChapPageIdx === currentChapTotalPages - 1 && dx < 0;
+      const damp = atStart || atEnd ? 0.32 : 1;
+      pageContent.classList.remove('animating');
+      pageContent.style.transform = `translate3d(${baseOffset + dx * damp}px, 0, 0)`;
+    }
+  },
+  { passive: true }
+);
+
+pageViewport.addEventListener(
   'touchend',
   (e) => {
-    if (touchStartX === null || e.changedTouches.length === 0) return;
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    const dy = e.changedTouches[0].clientY - touchStartY;
-    touchStartX = null;
-    touchStartY = null;
+    clearTimeout(longPressTimer);
+    if (ptrStartX === null || e.changedTouches.length === 0) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - ptrStartX;
+    const wasDragging = isDragging;
+    const wasLongPress = longPressTriggered;
+    const wasMoved = ptrMoved;
+    ptrStartX = null;
+    ptrStartY = null;
+    isDragging = false;
+    longPressTriggered = false;
 
-    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.35) {
-      if (dx < 0) goNextPage();
-      else goPrevPage();
+    if (wasLongPress) return;
+
+    if (wasDragging) {
+      if (dx < -45) goNextPage(true);
+      else if (dx > 45) goPrevPage(true);
+      else applyColumnOffset(true); // snap back smoothly
+      return;
+    }
+
+    if (!wasMoved) {
+      handleTapAt(t.clientX);
     }
   },
   { passive: true }
 );
 
+// Desktop mouse click & double-click highlight
+let lastTouchEndTs = 0;
+pageViewport.addEventListener('touchend', () => {
+  lastTouchEndTs = Date.now();
+}, { passive: true });
+
+pageViewport.addEventListener('click', (e) => {
+  if (Date.now() - lastTouchEndTs < 450) return; // avoid duplicate click after touch
+  if (!tocDrawer.classList.contains('hidden') || !searchDrawer.classList.contains('hidden')) return;
+  handleTapAt(e.clientX);
+});
+
+pageViewport.addEventListener('contextmenu', (e) => {
+  if (!readerHud.classList.contains('hidden')) return;
+  const p = e.target.closest('p[data-b]');
+  if (p) {
+    e.preventDefault();
+    toggleHighlightOnElement(p);
+  }
+});
+
 window.addEventListener('keydown', (e) => {
-  if (!readerView.classList.contains('hidden') && pasteModal.classList.contains('hidden')) {
+  if (
+    !readerView.classList.contains('hidden') &&
+    pasteModal.classList.contains('hidden') &&
+    searchDrawer.classList.contains('hidden')
+  ) {
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
       e.preventDefault();
       if (currentChapPageIdx < currentChapTotalPages - 1) {
         currentChapPageIdx++;
-        applyColumnOffset();
+        applyColumnOffset(true);
       } else if (currentBook && currentChapterIdx < currentBook.chapters.length - 1) {
         renderChapter(currentChapterIdx + 1, 0);
       }
@@ -562,13 +772,14 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       if (currentChapPageIdx > 0) {
         currentChapPageIdx--;
-        applyColumnOffset();
+        applyColumnOffset(true);
       } else if (currentChapterIdx > 0) {
         renderChapter(currentChapterIdx - 1, 'end');
       }
     } else if (e.key === 'Escape') {
       readerHud.classList.add('hidden');
       tocDrawer.classList.add('hidden');
+      searchDrawer.classList.add('hidden');
     }
   }
 });
@@ -577,7 +788,7 @@ window.addEventListener('keydown', (e) => {
 document.getElementById('btnPrevPageHud').addEventListener('click', () => {
   if (currentChapPageIdx > 0) {
     currentChapPageIdx--;
-    applyColumnOffset();
+    applyColumnOffset(true);
   } else if (currentChapterIdx > 0) {
     renderChapter(currentChapterIdx - 1, 'end');
   }
@@ -586,7 +797,7 @@ document.getElementById('btnPrevPageHud').addEventListener('click', () => {
 document.getElementById('btnNextPageHud').addEventListener('click', () => {
   if (currentChapPageIdx < currentChapTotalPages - 1) {
     currentChapPageIdx++;
-    applyColumnOffset();
+    applyColumnOffset(true);
   } else if (currentBook && currentChapterIdx < currentBook.chapters.length - 1) {
     renderChapter(currentChapterIdx + 1, 0);
   }
@@ -604,6 +815,11 @@ document.getElementById('btnFontMinus').addEventListener('click', () => {
 document.getElementById('btnFontPlus').addEventListener('click', () => {
   settings.fontSize = Math.min(36, settings.fontSize + 1);
   applySettings(true);
+});
+
+dimmerSlider.addEventListener('input', () => {
+  settings.dimmer = Number(dimmerSlider.value);
+  applySettings(false);
 });
 
 document.querySelectorAll('#lineHeightGroup button').forEach((btn) => {
@@ -627,7 +843,79 @@ document.querySelectorAll('#themeGroup button').forEach((btn) => {
   });
 });
 
-// ==================== TOC & BOOKMARKS ====================
+// ==================== IN-BOOK SEARCH ====================
+function runSearch(query) {
+  if (!currentBook) return;
+  const q = query.trim().toLowerCase();
+  searchResults.innerHTML = '';
+  if (q.length < 2) {
+    searchMeta.textContent = 'So‘z yozing (kamida 2 harf)';
+    return;
+  }
+
+  const matches = [];
+  for (let cIdx = 0; cIdx < currentBook.chapters.length; cIdx++) {
+    const ch = currentBook.chapters[cIdx];
+    const blocks = ch.blocks || [];
+    for (let bIdx = 0; bIdx < blocks.length; bIdx++) {
+      const txt = blocks[bIdx].text || '';
+      const pos = txt.toLowerCase().indexOf(q);
+      if (pos >= 0) {
+        const start = Math.max(0, pos - 38);
+        const end = Math.min(txt.length, pos + q.length + 62);
+        const snippet = (start > 0 ? '…' : '') + txt.slice(start, end) + (end < txt.length ? '…' : '');
+        matches.push({ cIdx, bIdx, chTitle: ch.title, snippet });
+        if (matches.length >= 60) break;
+      }
+    }
+    if (matches.length >= 60) break;
+  }
+
+  searchMeta.textContent = matches.length
+    ? `${matches.length}${matches.length === 60 ? '+' : ''} ta natija topildi`
+    : 'Hech narsa topilmadi';
+
+  const safeRegex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+
+  for (const m of matches) {
+    const li = document.createElement('li');
+    li.className = 'toc-item';
+    const highlighted = escapeHtml(m.snippet).replace(
+      safeRegex,
+      '<span class="search-mark">$1</span>'
+    );
+    li.innerHTML = `
+      <div>
+        <div class="toc-item-title" style="font-size:11.5px;color:var(--accent);">${escapeHtml(m.chTitle)}</div>
+        <div style="font-size:12.5px;color:var(--text);margin-top:3px;line-height:1.4;">${highlighted}</div>
+      </div>
+    `;
+    li.addEventListener('click', () => {
+      renderChapter(m.cIdx, { blockIdx: m.bIdx });
+      searchDrawer.classList.add('hidden');
+      readerHud.classList.add('hidden');
+    });
+    searchResults.appendChild(li);
+  }
+}
+
+document.getElementById('btnOpenSearch').addEventListener('click', () => {
+  searchDrawer.classList.remove('hidden');
+  searchInput.focus();
+  searchInput.select();
+});
+
+document.getElementById('btnCloseSearch').addEventListener('click', () => {
+  searchDrawer.classList.add('hidden');
+});
+
+document.getElementById('searchBackdrop').addEventListener('click', () => {
+  searchDrawer.classList.add('hidden');
+});
+
+searchInput.addEventListener('input', () => runSearch(searchInput.value));
+
+// ==================== TOC, BOOKMARKS & HIGHLIGHTS DRAWER ====================
 function renderTocList() {
   if (!currentBook) return;
   tocList.innerHTML = '';
@@ -665,7 +953,7 @@ function renderBookmarksList() {
         <div class="toc-item-title">${escapeHtml(bm.chapterTitle || '')}</div>
         <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${escapeHtml(bm.snippet || '')}</div>
       </div>
-      <span class="toc-item-page">${(bm.globalPage || 1)}-bet</span>
+      <span class="toc-item-page">${bm.globalPage || 1}-bet</span>
     `;
     li.addEventListener('click', () => {
       renderChapter(bm.chapterIdx || 0, { ratio: bm.ratio || 0 });
@@ -676,6 +964,64 @@ function renderBookmarksList() {
   });
 }
 
+function renderHighlightsList() {
+  if (!currentBook) return;
+  const list = loadHighlights(currentBook.id);
+  highlightsList.innerHTML = '';
+  if (!list.length) {
+    highlightsList.innerHTML = `<li class="toc-item"><span class="toc-item-title">Hali iqtibos saqlanmagan. O‘qiyotganda istalgan abzasni 0.5 soniya bosib turing ✨</span></li>`;
+    return;
+  }
+  list.forEach((hl, idx) => {
+    const li = document.createElement('li');
+    li.className = 'toc-item';
+    li.style.flexDirection = 'column';
+    li.style.alignItems = 'stretch';
+    li.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:6px;">
+        <span style="font-size:11px;color:var(--accent);font-weight:600;">${escapeHtml(hl.chapterTitle || '')}</span>
+        <span class="toc-item-page">${hl.globalPage || 1}-bet</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--text);margin-top:4px;line-height:1.45;">«${escapeHtml(hl.text.slice(0, 220))}${hl.text.length > 220 ? '…' : ''}»</div>
+      <div class="hl-actions">
+        <button class="hl-mini-btn btn-hl-go" type="button">↗ O‘tish</button>
+        <button class="hl-mini-btn btn-hl-copy" type="button">📋 Nusxalash</button>
+        <button class="hl-mini-btn btn-hl-del" type="button">🗑</button>
+      </div>
+    `;
+    li.querySelector('.btn-hl-go').addEventListener('click', (e) => {
+      e.stopPropagation();
+      renderChapter(hl.chapterIdx, { blockIdx: hl.blockIdx });
+      tocDrawer.classList.add('hidden');
+      readerHud.classList.add('hidden');
+    });
+    li.querySelector('.btn-hl-copy').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(hl.text);
+        showToast('Iqtibos nusxalandi 📋');
+      } catch {}
+    });
+    li.querySelector('.btn-hl-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      list.splice(idx, 1);
+      saveHighlights(currentBook.id, list);
+      applyHighlightsToDom();
+      renderHighlightsList();
+    });
+    highlightsList.appendChild(li);
+  });
+}
+
+function setDrawerTab(tab) {
+  tabBtnChapters.classList.toggle('active', tab === 'chapters');
+  tabBtnBookmarks.classList.toggle('active', tab === 'bookmarks');
+  tabBtnHighlights.classList.toggle('active', tab === 'highlights');
+  tocList.classList.toggle('hidden', tab !== 'chapters');
+  bookmarksList.classList.toggle('hidden', tab !== 'bookmarks');
+  highlightsList.classList.toggle('hidden', tab !== 'highlights');
+}
+
 btnToggleBookmark.addEventListener('click', () => {
   if (!currentBook) return;
   const list = loadBookmarks(currentBook.id);
@@ -684,6 +1030,7 @@ btnToggleBookmark.addEventListener('click', () => {
   );
   if (existingIdx >= 0) {
     list.splice(existingIdx, 1);
+    showToast('Xatcho‘p olib tashlandi');
   } else {
     const chap = currentBook.chapters[currentChapterIdx];
     const ratio =
@@ -698,15 +1045,17 @@ btnToggleBookmark.addEventListener('click', () => {
       snippet: `Bob ichida ${currentChapPageIdx + 1} / ${currentChapTotalPages}-bet`,
       ts: Date.now(),
     });
+    showToast('Xatcho‘p saqlandi 🔖');
   }
   saveBookmarks(currentBook.id, list);
-  applyColumnOffset();
+  applyColumnOffset(false);
   renderBookmarksList();
 });
 
 document.getElementById('btnOpenToc').addEventListener('click', () => {
   renderTocList();
   renderBookmarksList();
+  renderHighlightsList();
   tocDrawer.classList.remove('hidden');
 });
 
@@ -718,19 +1067,9 @@ document.getElementById('tocBackdrop').addEventListener('click', () => {
   tocDrawer.classList.add('hidden');
 });
 
-tabBtnChapters.addEventListener('click', () => {
-  tabBtnChapters.classList.add('active');
-  tabBtnBookmarks.classList.remove('active');
-  tocList.classList.remove('hidden');
-  bookmarksList.classList.add('hidden');
-});
-
-tabBtnBookmarks.addEventListener('click', () => {
-  tabBtnBookmarks.classList.add('active');
-  tabBtnChapters.classList.remove('active');
-  bookmarksList.classList.remove('hidden');
-  tocList.classList.add('hidden');
-});
+tabBtnChapters.addEventListener('click', () => setDrawerTab('chapters'));
+tabBtnBookmarks.addEventListener('click', () => setDrawerTab('bookmarks'));
+tabBtnHighlights.addEventListener('click', () => setDrawerTab('highlights'));
 
 // ==================== LIBRARY & BOOK SWITCHING ====================
 document.getElementById('btnOpenLibrary').addEventListener('click', () => {
@@ -744,6 +1083,7 @@ document.getElementById('btnResumeTop').addEventListener('click', () => {
   libraryView.classList.add('hidden');
   readerView.classList.remove('hidden');
   measureCurrentChapterLayout(null);
+  requestWakeLock();
 });
 
 async function openBookById(bookId) {
@@ -767,6 +1107,7 @@ async function openBookById(bookId) {
   libraryView.classList.add('hidden');
   readerView.classList.remove('hidden');
   readerHud.classList.add('hidden');
+  requestWakeLock();
 
   const saved = loadBookProgress(currentBook.id);
   if (saved) {
