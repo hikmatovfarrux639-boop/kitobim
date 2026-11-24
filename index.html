@@ -11,7 +11,10 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/png" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="/styles.css?v=6" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400..600;1,7..72,400..600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=8" />
 </head>
 <body>
   <!-- ==================== READER VIEW (DEFAULT) ==================== -->
@@ -87,27 +90,64 @@
           <div class="hud-control-group">
             <span class="hud-label">Shrift</span>
             <div class="hud-segmented" id="fontFamilyGroup">
-              <button type="button" data-ff="serif" class="active">Kitob</button>
-              <button type="button" data-ff="sans">Zamonaviy</button>
+              <button type="button" data-ff="literata" class="active">Literata</button>
+              <button type="button" data-ff="serif">Georgia</button>
+              <button type="button" data-ff="sans">Sans</button>
             </div>
           </div>
 
           <div class="hud-control-group">
-            <span class="hud-label">Rang rejimi</span>
-            <div class="hud-themes" id="themeGroup">
-              <button type="button" data-theme="amoled" class="theme-pill theme-amoled active">Qora</button>
-              <button type="button" data-theme="night" class="theme-pill theme-night">Tungi</button>
-              <button type="button" data-theme="sepia" class="theme-pill theme-sepia">Sepiya</button>
-              <button type="button" data-theme="day" class="theme-pill theme-day">Oq</button>
+            <span class="hud-label">Harf qalinligi</span>
+            <div class="hud-segmented" id="fontWeightGroup">
+              <button type="button" data-fw="400" class="active">Yengil</button>
+              <button type="button" data-fw="500">O‘rta</button>
+              <button type="button" data-fw="600">Qalin</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
+            <span class="hud-label">Chetki masofa</span>
+            <div class="hud-segmented" id="marginGroup">
+              <button type="button" data-mg="12">Tor</button>
+              <button type="button" data-mg="18" class="active">O‘rta</button>
+              <button type="button" data-mg="28">Keng</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
+            <span class="hud-label">20-20-20 ko‘z dami</span>
+            <div class="hud-segmented" id="eyeRestGroup">
+              <button type="button" data-eye="on" class="active">Yoqiq</button>
+              <button type="button" data-eye="off">O‘chiq</button>
             </div>
           </div>
 
           <div class="hud-control-group hud-full-row">
+            <span class="hud-label">Rang rejimi</span>
+            <div class="hud-themes" id="themeGroup">
+              <button type="button" data-theme="amoled" class="theme-pill theme-amoled active">Qora</button>
+              <button type="button" data-theme="charcoal" class="theme-pill theme-charcoal">Ko‘mir</button>
+              <button type="button" data-theme="night" class="theme-pill theme-night">Tungi</button>
+              <button type="button" data-theme="sepia" class="theme-pill theme-sepia">Sepiya</button>
+              <button type="button" data-theme="green" class="theme-pill theme-green">Yashil</button>
+              <button type="button" data-theme="day" class="theme-pill theme-day">Oq</button>
+            </div>
+          </div>
+
+          <div class="hud-control-group">
             <div class="hud-dimmer-row">
-              <span class="hud-label">Kechki yorqinlik (Dimmer)</span>
+              <span class="hud-label">Yorqinlik</span>
               <span id="dimmerLabel" class="hud-label">100%</span>
             </div>
             <input id="dimmerSlider" type="range" min="45" max="100" step="5" value="100" />
+          </div>
+
+          <div class="hud-control-group">
+            <div class="hud-dimmer-row">
+              <span class="hud-label">Issiq filtr</span>
+              <span id="warmthLabel" class="hud-label">0%</span>
+            </div>
+            <input id="warmthSlider" type="range" min="0" max="80" step="5" value="0" />
           </div>
         </div>
 
@@ -209,6 +249,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=6"></script>
+  <script type="module" src="/app.js?v=8"></script>
 </body>
 </html>

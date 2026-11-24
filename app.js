@@ -8,9 +8,13 @@ const COL_GAP = 32;
 const defaultSettings = {
   fontSize: 20,
   lineHeight: 1.42,
-  fontFamily: 'serif',
+  fontFamily: 'literata',
+  fontWeight: 400,
+  marginX: 18,
   theme: 'amoled',
   dimmer: 100,
+  warmth: 0,
+  eyeRest: true,
 };
 
 let settings = { ...defaultSettings, ...loadJson(SETTINGS_KEY, {}) };
@@ -48,6 +52,8 @@ const pageSlider = document.getElementById('pageSlider');
 const fontSizeLabel = document.getElementById('fontSizeLabel');
 const dimmerSlider = document.getElementById('dimmerSlider');
 const dimmerLabel = document.getElementById('dimmerLabel');
+const warmthSlider = document.getElementById('warmthSlider');
+const warmthLabel = document.getElementById('warmthLabel');
 const btnToggleBookmark = document.getElementById('btnToggleBookmark');
 
 const tocDrawer = document.getElementById('tocDrawer');
@@ -94,12 +100,28 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function showToast(msg) {
+function showToast(msg, durationMs = 1800) {
   readerToast.textContent = msg;
   readerToast.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => readerToast.classList.add('hidden'), 1800);
+  toastTimer = setTimeout(() => readerToast.classList.add('hidden'), durationMs);
 }
+
+// ==================== 20-20-20 EYE REST REMINDER ====================
+let activeReadSeconds = 0;
+setInterval(() => {
+  if (
+    settings.eyeRest &&
+    document.visibilityState === 'visible' &&
+    !readerView.classList.contains('hidden')
+  ) {
+    activeReadSeconds += 10;
+    if (activeReadSeconds >= 1200) {
+      activeReadSeconds = 0;
+      showToast('👁 20 daqiqa o‘qidingiz — 20 soniya uzoqqa qarab ko‘zingizni dam oldiring', 5500);
+    }
+  }
+}, 10000);
 
 // ==================== SCREEN WAKE LOCK ====================
 async function requestWakeLock() {
@@ -532,22 +554,45 @@ function applySettings(relayout = true) {
   document.documentElement.setAttribute('data-theme', settings.theme);
   document.documentElement.style.setProperty('--reader-font-size', `${settings.fontSize}px`);
   document.documentElement.style.setProperty('--reader-line-height', String(settings.lineHeight));
+  document.documentElement.style.setProperty('--reader-font-weight', String(settings.fontWeight || 400));
+  document.documentElement.style.setProperty('--reader-margin-x', `${settings.marginX || 18}px`);
   document.documentElement.style.setProperty('--reader-dimmer', String((settings.dimmer || 100) / 100));
-  const ff =
-    settings.fontFamily === 'sans'
-      ? "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-      : "Georgia, 'Noto Serif', 'Times New Roman', Times, serif";
+
+  const wPct = Number(settings.warmth || 0);
+  document.documentElement.style.setProperty('--warmth-sepia', String((wPct / 100).toFixed(2)));
+  document.documentElement.style.setProperty('--warmth-sat', String((1 + (wPct / 100) * 0.7).toFixed(2)));
+
+  let ff;
+  if (settings.fontFamily === 'sans') {
+    ff = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+  } else if (settings.fontFamily === 'serif') {
+    ff = "Georgia, 'Noto Serif', 'Times New Roman', Times, serif";
+  } else {
+    ff = "'Literata', Georgia, 'Noto Serif', 'Times New Roman', serif";
+  }
   document.documentElement.style.setProperty('--reader-font-family', ff);
 
   fontSizeLabel.textContent = `${settings.fontSize}px`;
   dimmerSlider.value = String(settings.dimmer || 100);
   dimmerLabel.textContent = `${settings.dimmer || 100}%`;
+  warmthSlider.value = String(wPct);
+  warmthLabel.textContent = `${wPct}%`;
 
   document.querySelectorAll('#lineHeightGroup button').forEach((btn) => {
     btn.classList.toggle('active', Number(btn.dataset.lh) === Number(settings.lineHeight));
   });
   document.querySelectorAll('#fontFamilyGroup button').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.ff === settings.fontFamily);
+  });
+  document.querySelectorAll('#fontWeightGroup button').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.dataset.fw) === Number(settings.fontWeight || 400));
+  });
+  document.querySelectorAll('#marginGroup button').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.dataset.mg) === Number(settings.marginX || 18));
+  });
+  document.querySelectorAll('#eyeRestGroup button').forEach((btn) => {
+    const isOn = settings.eyeRest !== false;
+    btn.classList.toggle('active', (btn.dataset.eye === 'on') === isOn);
   });
   document.querySelectorAll('#themeGroup button').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.theme === settings.theme);
@@ -820,6 +865,34 @@ document.getElementById('btnFontPlus').addEventListener('click', () => {
 dimmerSlider.addEventListener('input', () => {
   settings.dimmer = Number(dimmerSlider.value);
   applySettings(false);
+});
+
+warmthSlider.addEventListener('input', () => {
+  settings.warmth = Number(warmthSlider.value);
+  applySettings(false);
+});
+
+document.querySelectorAll('#fontWeightGroup button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.fontWeight = Number(btn.dataset.fw);
+    applySettings(true);
+  });
+});
+
+document.querySelectorAll('#marginGroup button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.marginX = Number(btn.dataset.mg);
+    applySettings(true);
+  });
+});
+
+document.querySelectorAll('#eyeRestGroup button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.eyeRest = btn.dataset.eye === 'on';
+    activeReadSeconds = 0;
+    applySettings(false);
+    showToast(settings.eyeRest ? '20-20-20 ko‘z eslatmasi yoqildi 👁' : 'Ko‘z eslatmasi o‘chirildi');
+  });
 });
 
 document.querySelectorAll('#lineHeightGroup button').forEach((btn) => {

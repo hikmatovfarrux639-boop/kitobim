@@ -11,6 +11,18 @@ html[data-theme="amoled"] {
   --accent-soft: rgba(212, 168, 79, 0.16);
 }
 
+html[data-theme="charcoal"] {
+  --bg: #121212;
+  --text: #c4bba9;
+  --heading: #dcd4c4;
+  --muted: #767066;
+  --surface: #1b1b1d;
+  --surface-2: #26262a;
+  --border: #333339;
+  --accent: #d4a84f;
+  --accent-soft: rgba(212, 168, 79, 0.16);
+}
+
 html[data-theme="night"] {
   --bg: #0f141c;
   --text: #cbd5e1;
@@ -35,6 +47,18 @@ html[data-theme="sepia"] {
   --accent-soft: rgba(140, 90, 43, 0.15);
 }
 
+html[data-theme="green"] {
+  --bg: #e8f0e6;
+  --text: #1e2b21;
+  --heading: #101b13;
+  --muted: #5c7060;
+  --surface: #dce7d9;
+  --surface-2: #cfdecb;
+  --border: #b8cbb3;
+  --accent: #2c6e49;
+  --accent-soft: rgba(44, 110, 73, 0.14);
+}
+
 html[data-theme="day"] {
   --bg: #ffffff;
   --text: #1f2933;
@@ -50,8 +74,12 @@ html[data-theme="day"] {
 :root {
   --reader-font-size: 20px;
   --reader-line-height: 1.42;
-  --reader-font-family: Georgia, 'Noto Serif', 'Times New Roman', Times, serif;
+  --reader-font-family: 'Literata', Georgia, 'Noto Serif', 'Times New Roman', serif;
+  --reader-font-weight: 400;
+  --reader-margin-x: 18px;
   --reader-dimmer: 1;
+  --warmth-sepia: 0;
+  --warmth-sat: 1;
 }
 
 * {
@@ -118,12 +146,12 @@ body {
   max-width: 660px;
   flex: 1;
   min-height: 0;
-  padding: max(10px, env(safe-area-inset-top, 10px)) 16px 2px 16px;
+  padding: max(10px, env(safe-area-inset-top, 10px)) var(--reader-margin-x, 18px) 2px var(--reader-margin-x, 18px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  opacity: var(--reader-dimmer, 1);
-  transition: opacity 0.15s ease;
+  filter: sepia(var(--warmth-sepia, 0)) saturate(var(--warmth-sat, 1)) brightness(var(--reader-dimmer, 1));
+  transition: filter 0.15s ease;
 }
 
 .page-column-mask {
@@ -142,6 +170,7 @@ body {
   column-fill: auto;
   font-family: var(--reader-font-family);
   font-size: var(--reader-font-size);
+  font-weight: var(--reader-font-weight, 400);
   line-height: var(--reader-line-height);
   color: var(--text);
   letter-spacing: 0;
@@ -565,9 +594,18 @@ body {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+.hud-control-group input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 .theme-amoled {
   background: #000000;
   color: #cfcfcf;
+}
+.theme-charcoal {
+  background: #121212;
+  color: #c4bba9;
 }
 .theme-night {
   background: #0f141c;
@@ -576,6 +614,10 @@ body {
 .theme-sepia {
   background: #f4ecd8;
   color: #2c2218;
+}
+.theme-green {
+  background: #e8f0e6;
+  color: #1e2b21;
 }
 .theme-day {
   background: #ffffff;
