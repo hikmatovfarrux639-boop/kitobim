@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hfr-v6';
+const CACHE_NAME = 'hfr-v7';
 const ASSETS = [
   '/',
   '/index.html',
